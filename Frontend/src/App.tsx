@@ -7,6 +7,7 @@ import { WagmiProvider } from 'wagmi';
 import { RainbowKitProvider } from '@rainbow-me/rainbowkit';
 import { config } from './config/wagmi';
 import WrongNetworkBanner from './components/WrongNetworkBanner';
+import { WalletConnectionMonitor } from './components/WalletConnectionMonitor';
 import { Footer } from './components/Footer';
 import Home from "./pages/Home";
 import CreateCapsule from "./pages/CreateCapsule";
@@ -17,6 +18,7 @@ import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 import CapsuleDetail from "./pages/CapsuleDetail";
 import HowItWorks from "./pages/HowItWorks";
+import IPFSDemo from "./pages/IPFSDemo";
 
 import '@rainbow-me/rainbowkit/styles.css';
 
@@ -27,6 +29,7 @@ const App = () => (
     <QueryClientProvider client={queryClient}>
       <RainbowKitProvider>
         <TooltipProvider>
+          <WalletConnectionMonitor />
           <Toaster />
           <Sonner />
           <WrongNetworkBanner />
@@ -40,6 +43,7 @@ const App = () => (
               <Route path="/profile" element={<Profile />} />
               <Route path="/capsule/:id" element={<CapsuleDetail />} />
               <Route path="/how-it-works" element={<HowItWorks />} />
+              <Route path="/ipfs-demo" element={<IPFSDemo />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>

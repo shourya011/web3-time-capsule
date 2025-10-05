@@ -1,0 +1,42 @@
+{
+  "name": "time-capsule-contracts",
+  "version": "1.0.0",
+  "description": "Smart contracts for Web3 Time Capsule application",
+  "type": "module",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.ts",
+    "deploy:local": "hardhat run scripts/deploy.ts --network hardhat",
+    "deploy:baseSepolia": "hardhat run scripts/deploy.ts --network baseSepolia",
+    "verify": "hardhat verify --network baseSepolia",
+    "clean": "hardhat clean",
+    "console": "hardhat console --network baseSepolia",
+    "node": "hardhat node",
+    "typechain": "hardhat typechain"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "^3.0.3",
+    "@nomicfoundation/hardhat-ignition-viem": "^3.0.3",
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.0",
+    "@types/chai": "^5.2.2",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.18.8",
+    "chai": "^6.2.0",
+    "dotenv": "^16.4.5",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "hardhat": "^3.0.6",
+    "typescript": "~5.8.0",
+    "viem": "^2.37.12"
+  },
+  "keywords": [
+    "solidity",
+    "ethereum",
+    "smart-contracts",
+    "hardhat",
+    "time-capsule",
+    "web3"
+  ],
+  "author": "Shourya Sharma",
+  "license": "MIT"
+}

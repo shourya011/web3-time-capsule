@@ -1,11 +1,13 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Rocket, Wallet, ChevronDown, LogOut, Copy, ExternalLink } from 'lucide-react';
+import { Rocket, Wallet, ChevronDown, LogOut, Copy, ExternalLink, HelpCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useChainId, useEnsName, useDisconnect } from 'wagmi';
 import { formatAddress } from '@/lib/ens';
 import { baseSepolia } from 'wagmi/chains';
+import { clearWalletStorage } from '@/config/wagmi';
+import { DisconnectTroubleshooter } from '@/components/DisconnectTroubleshooter';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,12 +55,43 @@ export const Navigation = () => {
     }
   };
 
-  const handleDisconnect = () => {
-    disconnect();
+  const handleDisconnect = async () => {
+    try {
+      // Use wagmi disconnect
+      disconnect();
+      
+      // Clear wallet storage using our utility function
+      clearWalletStorage();
+      
+      toast({
+        title: "Wallet disconnected",
+        description: "Your wallet has been successfully disconnected.",
+      });
+    } catch (error) {
+      console.error('Disconnect error:', error);
+      toast({
+        title: "Disconnect failed",
+        description: "There was an issue disconnecting your wallet. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleForceDisconnect = () => {
+    // Force disconnect by clearing all storage and reloading
+    clearWalletStorage();
+    localStorage.clear();
+    sessionStorage.clear();
+    
     toast({
-      title: "Wallet disconnected",
-      description: "Your wallet has been successfully disconnected.",
+      title: "Force disconnect",
+      description: "All wallet data cleared. Refreshing page...",
     });
+    
+    // Small delay for toast to show
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
   };
 
   const getNetworkBadge = () => {
@@ -150,8 +183,24 @@ export const Navigation = () => {
                           className="text-destructive"
                         >
                           <LogOut className="w-4 h-4 mr-2" />
-                          Disconnect
+                          Disconnect Wallet
                         </DropdownMenuItem>
+                        <DropdownMenuItem 
+                          onClick={() => handleForceDisconnect()}
+                          className="text-destructive"
+                        >
+                          <LogOut className="w-4 h-4 mr-2" />
+                          Force Disconnect
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DisconnectTroubleshooter
+                          trigger={
+                            <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                              <HelpCircle className="w-4 h-4 mr-2" />
+                              Disconnect Help
+                            </DropdownMenuItem>
+                          }
+                        />
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
