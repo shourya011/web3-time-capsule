@@ -15,6 +15,7 @@ export default function IPFSDemo() {
   const [cid, setCid] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [testResults, setTestResults] = useState<string[]>([]);
+  const [manualContent, setManualContent] = useState(''); // For manual content bridge
 
   const addTestResult = (message: string) => {
     setTestResults(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`]);
@@ -153,15 +154,33 @@ export default function IPFSDemo() {
         addTestResult('⚠️ Warning: CID format might be invalid');
       }
 
-      // Try to download
-      addTestResult('📥 Attempting download...');
+      // First, check if content exists
+      addTestResult('🔍 Checking content availability across gateways...');
+      const availability = await ipfsService.checkContentExists(cid);
+      
+      availability.gateways.forEach(gateway => {
+        const statusIcon = gateway.status === 'available' ? '✅' : 
+                          gateway.status === 'cors_blocked' ? '🚫' : '❌';
+        addTestResult(`  ${statusIcon} ${gateway.name}: ${gateway.status}`);
+      });
+
+      // Try to download with fallbacks
+      addTestResult('📥 Attempting download with enhanced CORS handling...');
       addTestResult('⏳ This may take 15-30 seconds for recently uploaded content...');
       
-      const content = await ipfsService.download(cid);
-      addTestResult(`✅ Download successful! Content length: ${content.length} characters`);
-      addTestResult(`📄 Content preview: ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`);
+      const downloadResult = await ipfsService.downloadWithFallbacks(cid);
       
-      setDownloadResult(content);
+      if (downloadResult.content) {
+        addTestResult(`✅ Download successful! Content length: ${downloadResult.content.length} characters`);
+        addTestResult(`📄 Content preview: ${downloadResult.content.slice(0, 200)}${downloadResult.content.length > 200 ? '...' : ''}`);
+        setDownloadResult(downloadResult.content);
+      } else {
+        addTestResult(`❌ Download blocked by CORS restrictions`);
+        addTestResult(`💡 Alternative access methods:`);
+        downloadResult.suggestions.forEach(suggestion => {
+          addTestResult(`   ${suggestion}`);
+        });
+      }
       
     } catch (error) {
       addTestResult(`❌ CID test failed: ${error}`);
@@ -169,13 +188,11 @@ export default function IPFSDemo() {
       // Provide helpful suggestions based on error type
       const errorStr = String(error);
       if (errorStr.includes('CORS')) {
-        addTestResult('💡 Tip: CORS error - try waiting 2-3 minutes for IPFS propagation');
+        addTestResult('💡 Tip: CORS error - try the "Direct Gateway Test" button');
       } else if (errorStr.includes('404') || errorStr.includes('Not Found')) {
         addTestResult('💡 Tip: Content not found - wait for IPFS network propagation (2-5 minutes)');
       } else if (errorStr.includes('Load failed')) {
-        addTestResult('💡 Tip: Network/CORS issue - try "Wait for IPFS" button or different browser');
-      } else {
-        addTestResult('💡 Tip: Make sure the CID is valid and content exists on IPFS');
+        addTestResult('💡 Tip: Network/CORS issue - try "Direct Gateway Test" button');
       }
     }
     setIsLoading(false);
@@ -206,6 +223,63 @@ export default function IPFSDemo() {
       addTestResult(`❌ Wait interrupted: ${error}`);
     }
     setIsLoading(false);
+  };
+
+  const testDirectGatewayAccess = () => {
+    if (!cid.trim()) {
+      addTestResult('❌ Please enter a CID first');
+      return;
+    }
+
+    if (cid.startsWith('local_')) {
+      addTestResult('❌ Local storage CIDs cannot be accessed via gateway');
+      return;
+    }
+
+    addTestResult('🌐 Opening direct gateway links in new tabs...');
+    
+    const gateways = [
+      { name: 'Pinata Gateway', url: `https://gateway.pinata.cloud/ipfs/${cid}` },
+      { name: 'IPFS.io Gateway', url: `https://ipfs.io/ipfs/${cid}` },
+      { name: 'Cloudflare Gateway', url: `https://cloudflare-ipfs.com/ipfs/${cid}` },
+      { name: 'Dweb.link Gateway', url: `https://dweb.link/ipfs/${cid}` },
+    ];
+
+    gateways.forEach(gateway => {
+      addTestResult(`🔗 ${gateway.name}: ${gateway.url}`);
+      window.open(gateway.url, '_blank');
+    });
+
+    addTestResult('💡 Check the opened tabs - if content loads, IPFS works but CORS is blocking the app');
+    addTestResult('📋 If you can see content, copy it and use "Manual Content Bridge" below');
+  };
+
+  const useManualContentBridge = () => {
+    if (!cid.trim()) {
+      addTestResult('❌ Please enter a CID first');
+      return;
+    }
+
+    if (!manualContent.trim()) {
+      addTestResult('❌ Please paste the content from the gateway tabs');
+      return;
+    }
+
+    try {
+      addTestResult('🔄 Using manual content bridge...');
+      
+      // Store the manually pasted content as if it was downloaded
+      setDownloadResult(manualContent);
+      addTestResult(`✅ Content bridged successfully! Length: ${manualContent.length} characters`);
+      addTestResult(`📄 Content preview: ${manualContent.slice(0, 200)}${manualContent.length > 200 ? '...' : ''}`);
+      
+      // Optionally store in localStorage for future reference
+      localStorage.setItem(`ipfs_manual_${cid}`, manualContent);
+      addTestResult(`💾 Content cached locally for CID: ${cid}`);
+      
+    } catch (error) {
+      addTestResult(`❌ Manual bridge failed: ${error}`);
+    }
   };
 
   const clearResults = () => {
@@ -284,6 +358,19 @@ export default function IPFSDemo() {
               />
             </div>
 
+            <div>
+              <label className="block text-sm font-medium mb-2">Manual Content Bridge (CORS Workaround)</label>
+              <Textarea
+                value={manualContent}
+                onChange={(e) => setManualContent(e.target.value)}
+                placeholder="Paste content from gateway tabs here to bypass CORS..."
+                rows={3}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                💡 Use "Direct Gateway Test" → copy content from tabs → paste here → click "Bridge Content"
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <Button onClick={testIPFSAvailability} disabled={isLoading} variant="outline">
                 Check IPFS
@@ -297,17 +384,20 @@ export default function IPFSDemo() {
               <Button onClick={waitForIPFSPropagation} disabled={isLoading || !cid} variant="outline">
                 Wait for IPFS
               </Button>
+              <Button onClick={testDirectGatewayAccess} disabled={!cid} variant="outline">
+                Direct Gateway Test
+              </Button>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2">
+              <Button onClick={useManualContentBridge} disabled={!cid || !manualContent} variant="outline" className="bg-green-50 hover:bg-green-100">
+                Bridge Content
+              </Button>
               <Button onClick={showLocalStorageContents} disabled={isLoading} variant="outline">
                 Show Storage
               </Button>
             </div>
             
-            <div className="grid grid-cols-1 gap-2">
-              <Button onClick={clearResults} variant="outline">
-                Clear Results
-              </Button>
-            </div>
-
             <div className="grid grid-cols-1 gap-2">
               <Button onClick={testIPFSUpload} disabled={isLoading}>
                 {isLoading ? 'Uploading...' : 'Upload to IPFS'}

@@ -141,7 +141,7 @@ class IPFSService {
     return this.uploadJSON(capsuleData as unknown as Record<string, unknown>, fileName);
   }
 
-  // Download content from IPFS with improved error handling and CORS support
+  // Download content from IPFS with advanced CORS handling and Pinata API integration
   async download(cid: string): Promise<string> {
     console.log(`📥 Downloading from CID: ${cid}`);
     
@@ -161,105 +161,176 @@ class IPFSService {
       return stored;
     }
 
-    // First, try Pinata's direct API (more reliable for recently uploaded content)
+    // Strategy 1: Try CORS proxy services
+    console.log('🔄 Strategy 1: Trying CORS proxy services...');
+    const corsProxies = [
+      `https://api.allorigins.win/get?url=${encodeURIComponent(`${this.pinataGateway}/ipfs/${cid}`)}`,
+      `https://cors-anywhere.herokuapp.com/${this.pinataGateway}/ipfs/${cid}`,
+      `https://corsproxy.io/?${encodeURIComponent(`${this.pinataGateway}/ipfs/${cid}`)}`,
+    ];
+
+    for (const proxyUrl of corsProxies) {
+      try {
+        console.log(`🔍 Trying CORS proxy: ${proxyUrl.split('?')[0]}...`);
+        const response = await fetch(proxyUrl, {
+          headers: {
+            'Accept': 'application/json, text/plain, */*',
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          // Different proxies return data in different formats
+          const content = data.contents || data.data || data.response || JSON.stringify(data);
+          if (content && typeof content === 'string') {
+            console.log(`✅ Successfully downloaded via CORS proxy`);
+            return content;
+          }
+        }
+      } catch (error) {
+        console.warn(`❌ CORS proxy failed:`, error);
+      }
+    }
+
+    // Strategy 2: Try Pinata's pin list API first (most reliable for our uploads)
     if (this.pinataJWT) {
       try {
-        console.log('🔑 Trying Pinata API first...');
-        const pinataApiResponse = await fetch(`${this.pinataApiUrl}/data/pinList?status=pinned&hashContains=${cid}`, {
+        console.log('🔑 Strategy 2: Checking Pinata pin list...');
+        const pinListResponse = await fetch(`${this.pinataApiUrl}/data/pinList?status=pinned&hashContains=${cid}&pageLimit=1`, {
           headers: {
             'Authorization': `Bearer ${this.pinataJWT}`,
           },
         });
 
-        if (pinataApiResponse.ok) {
-          const pinData = await pinataApiResponse.json();
+        if (pinListResponse.ok) {
+          const pinData = await pinListResponse.json();
           if (pinData.rows && pinData.rows.length > 0) {
-            console.log('✅ Found content in Pinata, attempting gateway download...');
+            console.log('✅ Content found in Pinata pin list');
+            
+            // Try Pinata's dedicated gateway with authentication
+            try {
+              console.log('🔑 Strategy 2a: Using authenticated Pinata gateway...');
+              const authResponse = await fetch(`${this.pinataGateway}/ipfs/${cid}`, {
+                headers: {
+                  'Authorization': `Bearer ${this.pinataJWT}`,
+                  'Accept': 'application/json, text/plain, */*',
+                },
+              });
+              
+              if (authResponse.ok) {
+                const content = await authResponse.text();
+                console.log(`✅ Successfully downloaded via authenticated Pinata gateway`);
+                return content;
+              }
+            } catch (error) {
+              console.warn('⚠️ Authenticated Pinata gateway failed:', error);
+            }
           }
         }
       } catch (error) {
-        console.warn('⚠️ Pinata API check failed, continuing with gateways...', error);
+        console.warn('⚠️ Pinata API check failed:', error);
       }
     }
-    
-    // Try multiple IPFS gateways with improved CORS handling
-    const gateways = [
-      // Pinata gateway (should work best for our uploads)
-      `${this.pinataGateway}/ipfs/${cid}`,
-      // Public gateways with good CORS support
-      `https://ipfs.io/ipfs/${cid}`,
-      `https://dweb.link/ipfs/${cid}`,
-      `https://cloudflare-ipfs.com/ipfs/${cid}`,
-      `https://gateway.ipfs.io/ipfs/${cid}`,
-      // Additional reliable gateways
-      `https://cf-ipfs.com/ipfs/${cid}`,
+
+    // Strategy 3: Try CORS-friendly gateways with specific headers
+    console.log('🌐 Strategy 3: Trying CORS-optimized gateways...');
+    const corsOptimizedGateways = [
+      // Pinata public gateway (no auth, but CORS-friendly)
+      { url: `${this.pinataGateway}/ipfs/${cid}`, name: 'Pinata Public' },
+      // Cloudflare IPFS (good CORS support)
+      { url: `https://cloudflare-ipfs.com/ipfs/${cid}`, name: 'Cloudflare' },
+      // Dweb.link (designed for browsers)
+      { url: `https://dweb.link/ipfs/${cid}`, name: 'Dweb.link' },
+      // IPFS.io with different subdomain (sometimes works better)
+      { url: `https://${cid}.ipfs.dweb.link`, name: 'Dweb.link Subdomain' },
     ];
     
-    let lastError: Error | null = null;
-    
-    // Try each gateway with retries
-    for (let gatewayIndex = 0; gatewayIndex < gateways.length; gatewayIndex++) {
-      const gateway = gateways[gatewayIndex];
-      
-      // Retry each gateway up to 2 times
-      for (let retry = 0; retry < 2; retry++) {
-        try {
-          const retryText = retry > 0 ? ` (retry ${retry})` : '';
-          console.log(`🔍 Trying gateway: ${gateway}${retryText}`);
-          
-          // Add delay between retries and after first gateway
-          if (retry > 0 || gatewayIndex > 0) {
-            await new Promise(resolve => setTimeout(resolve, 1000 + (retry * 2000)));
-          }
-          
-          // Create a timeout promise
-          const timeoutPromise = new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error('Request timeout after 20 seconds')), 20000)
-          );
-          
-          const fetchPromise = fetch(gateway, {
+    for (const gateway of corsOptimizedGateways) {
+      try {
+        console.log(`🔍 Trying ${gateway.name}: ${gateway.url}`);
+        
+        const response = await Promise.race([
+          fetch(gateway.url, {
             method: 'GET',
             headers: {
               'Accept': 'application/json, text/plain, */*',
               'Cache-Control': 'no-cache',
-              'User-Agent': 'TimeCapsule/1.0',
+              'User-Agent': 'Mozilla/5.0 (compatible; TimeCapsule/1.0)',
             },
-            mode: 'cors', // Explicitly set CORS mode
-          });
-          
-          const response = await Promise.race([fetchPromise, timeoutPromise]);
-          
-          if (response.ok) {
-            const content = await response.text();
-            console.log(`✅ Successfully downloaded from: ${gateway}${retryText}`);
-            console.log(`📄 Content length: ${content.length} chars`);
-            console.log(`📄 Content preview: ${content.slice(0, 100)}${content.length > 100 ? '...' : ''}`);
-            return content;
-          } else {
-            lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
-            console.warn(`❌ Gateway returned ${response.status}: ${gateway}${retryText}`);
-            
-            // Don't retry on 404 errors
-            if (response.status === 404) {
-              break;
-            }
-          }
-        } catch (error) {
-          const retryText = retry > 0 ? ` (retry ${retry})` : '';
-          lastError = error as Error;
-          console.warn(`❌ Gateway failed: ${gateway}${retryText}`, error);
-          
-          // If it's a CORS error, try next gateway immediately
-          if (error instanceof TypeError && error.message.includes('CORS')) {
-            console.log('🚫 CORS error detected, trying next gateway...');
-            break;
-          }
+            mode: 'cors',
+          }),
+          new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout after 15 seconds')), 15000)
+          )
+        ]);
+        
+        if (response.ok) {
+          const content = await response.text();
+          console.log(`✅ Successfully downloaded from ${gateway.name}`);
+          console.log(`📄 Content length: ${content.length} chars`);
+          return content;
+        } else {
+          console.warn(`❌ ${gateway.name} returned ${response.status}: ${response.statusText}`);
         }
+      } catch (error) {
+        console.warn(`❌ ${gateway.name} failed:`, error);
+      }
+    }
+
+    // Strategy 4: Try alternative access methods
+    console.log('🔄 Strategy 4: Trying alternative methods...');
+    
+    // Try with different request modes
+    const alternativeMethods = [
+      { mode: 'no-cors', name: 'No-CORS mode' },
+      { mode: 'same-origin', name: 'Same-origin mode' },
+    ];
+    
+    for (const method of alternativeMethods) {
+      try {
+        console.log(`🔍 Trying ${method.name} with Pinata gateway...`);
+        const response = await fetch(`${this.pinataGateway}/ipfs/${cid}`, {
+          method: 'GET',
+          mode: method.mode as RequestMode,
+          headers: {
+            'Accept': '*/*',
+          },
+        });
+        
+        if (response.ok) {
+          const content = await response.text();
+          console.log(`✅ Successfully downloaded using ${method.name}`);
+          return content;
+        }
+      } catch (error) {
+        console.warn(`❌ ${method.name} failed:`, error);
       }
     }
     
-    // If all gateways fail, provide helpful error message
-    const helpfulError = this.getHelpfulDownloadError(cid, lastError);
+    // If all strategies fail, provide comprehensive error message
+    const helpfulError = `IPFS download failed after trying multiple strategies:
+
+CID: ${cid}
+
+Attempted strategies:
+1. ✗ CORS proxy services (3 different proxies)
+2. ✗ Pinata authenticated API
+3. ✗ CORS-optimized gateways (4 different gateways)
+4. ✗ Alternative request modes
+
+This is likely due to:
+- CORS restrictions from all IPFS gateways
+- Content not fully propagated across IPFS network
+- Network connectivity issues
+
+Solutions to try:
+1. Wait 5-10 minutes for better IPFS propagation
+2. Try accessing the content directly: ${this.pinataGateway}/ipfs/${cid}
+3. Use a different browser or disable CORS temporarily for testing
+4. Upload content again and try immediately
+
+The content exists on IPFS but browser CORS policies are preventing access.`;
+
     throw new Error(helpfulError);
   }
 
@@ -310,6 +381,75 @@ class IPFSService {
     return fileName 
       ? `${this.pinataGateway}/ipfs/${cid}/${fileName}`
       : `${this.pinataGateway}/ipfs/${cid}`;
+  }
+
+  // Check if content exists on IPFS (without downloading it)
+  async checkContentExists(cid: string): Promise<{ exists: boolean; gateways: Array<{ name: string; url: string; status: string }> }> {
+    if (cid.startsWith('local_')) {
+      const exists = localStorage.getItem(`ipfs_${cid}`) !== null;
+      return {
+        exists,
+        gateways: [{ name: 'localStorage', url: `local://${cid}`, status: exists ? 'available' : 'not found' }]
+      };
+    }
+
+    const gateways = [
+      { name: 'Pinata Gateway', url: `${this.pinataGateway}/ipfs/${cid}` },
+      { name: 'IPFS.io Gateway', url: `https://ipfs.io/ipfs/${cid}` },
+      { name: 'Cloudflare Gateway', url: `https://cloudflare-ipfs.com/ipfs/${cid}` },
+      { name: 'Dweb.link Gateway', url: `https://dweb.link/ipfs/${cid}` },
+    ];
+
+    const results = [];
+    let anyExists = false;
+
+    for (const gateway of gateways) {
+      try {
+        const response = await fetch(gateway.url, { 
+          method: 'HEAD', // Just check if it exists without downloading
+          mode: 'no-cors',
+        });
+        
+        const status = response.ok ? 'available' : `error ${response.status}`;
+        if (response.ok) anyExists = true;
+        
+        results.push({
+          name: gateway.name,
+          url: gateway.url,
+          status: status,
+        });
+      } catch (error) {
+        results.push({
+          name: gateway.name,
+          url: gateway.url,
+          status: 'cors_blocked',
+        });
+      }
+    }
+
+    return { exists: anyExists, gateways: results };
+  }
+
+  // Alternative download method that suggests external access
+  async downloadWithFallbacks(cid: string): Promise<{ content?: string; suggestions: string[] }> {
+    const suggestions: string[] = [];
+
+    try {
+      const content = await this.download(cid);
+      return { content, suggestions: [] };
+    } catch (error) {
+      console.warn('Standard download failed, providing alternatives:', error);
+      
+      suggestions.push(`🌐 Try opening directly: ${this.pinataGateway}/ipfs/${cid}`);
+      suggestions.push(`🔧 Copy this URL and open in a new tab: https://ipfs.io/ipfs/${cid}`);
+      suggestions.push(`💻 Or use curl/wget: curl "${this.pinataGateway}/ipfs/${cid}"`);
+      
+      if (this.pinataJWT) {
+        suggestions.push(`🔑 Try authenticated Pinata: curl -H "Authorization: Bearer YOUR_JWT" "${this.pinataGateway}/ipfs/${cid}"`);
+      }
+
+      return { suggestions };
+    }
   }
 
   // Check if IPFS is available
