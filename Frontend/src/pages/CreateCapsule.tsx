@@ -210,6 +210,8 @@ const CreateCapsule = () => {
   };
 
   const encryptAndUpload = async () => {
+    console.log('🔄 encryptAndUpload called', { isConnected, address, formData });
+    
     if (!isConnected || !address) {
       toast({
         title: "Wallet not connected",
@@ -226,7 +228,7 @@ const CreateCapsule = () => {
       const content = {
         title: formData.title,
         description: formData.description,
-        files: await Promise.all(formData.files.map(async (uploadedFile) => {
+        files: formData.files.length > 0 ? await Promise.all(formData.files.map(async (uploadedFile) => {
           const { encryptedData, originalName, type } = await cryptoService.encryptFile(uploadedFile.file);
           return {
             name: originalName,
@@ -236,7 +238,7 @@ const CreateCapsule = () => {
             iv: cryptoService.arrayBufferToBase64(encryptedData.iv),
             key: cryptoService.arrayBufferToBase64(encryptedData.key),
           };
-        })),
+        })) : [],
         createdAt: Date.now(),
         creator: address,
       };
@@ -247,7 +249,8 @@ const CreateCapsule = () => {
       setEncryptedData(encrypted);
 
       // Upload to IPFS
-      const ipfsResult = await ipfsService.upload(encrypted.encryptedContent, 'capsule-content');
+      const encryptedContentBase64 = cryptoService.arrayBufferToBase64(encrypted.encryptedContent);
+      const ipfsResult = await ipfsService.uploadString(encryptedContentBase64, 'capsule-content.enc');
       
       toast({
         title: "Content encrypted and uploaded",
@@ -280,8 +283,9 @@ const CreateCapsule = () => {
     try {
       setLoading(true);
 
-      // Upload encrypted content to IPFS
-      const ipfsResult = await ipfsService.upload(encryptedData.encryptedContent, 'capsule-content');
+      // Upload encrypted content to IPFS (already done in previous step)
+      const encryptedContentBase64 = cryptoService.arrayBufferToBase64(encryptedData.encryptedContent);
+      const ipfsResult = await ipfsService.uploadString(encryptedContentBase64, 'capsule-content.enc');
       
       // Get unlock timestamp
       const unlockTime = Math.floor(new Date(formData.unlockDate).getTime() / 1000);
@@ -295,11 +299,11 @@ const CreateCapsule = () => {
       const capsuleId = await timeCapsuleContract.createCapsule({
         title: formData.title,
         description: formData.description,
-        unlockTime,
-        recipients,
-        contentHash: ipfsResult.cid,
-        encryptedKey: cryptoService.arrayBufferToBase64(encryptedData.key),
-      }, address);
+        content: ipfsResult.cid,
+        unlockDate: new Date(formData.unlockDate),
+        visibility: 'public',
+        recipients: formData.recipients,
+      });
 
       // Create recovery kit
       const kit = cryptoService.createRecoveryKit(encryptedData, capsuleId);
@@ -641,7 +645,7 @@ const CreateCapsule = () => {
                     <div>
                       <h3 className="text-lg font-semibold">Client-Side Encryption</h3>
                       <p className="text-sm text-muted-foreground">
-                        Your content will be encrypted locally before uploading to IPFS
+                        Your capsule content (title, description, and files) will be encrypted locally before uploading to IPFS
                       </p>
                     </div>
                   </div>
@@ -664,7 +668,7 @@ const CreateCapsule = () => {
 
                 <CosmicButton 
                   onClick={encryptAndUpload} 
-                  disabled={loading || formData.files.length === 0}
+                  disabled={loading || !formData.title.trim()}
                   className="w-full py-4"
                   glow
                 >

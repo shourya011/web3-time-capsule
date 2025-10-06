@@ -19,6 +19,7 @@ import NotFound from "./pages/NotFound";
 import CapsuleDetail from "./pages/CapsuleDetail";
 import HowItWorks from "./pages/HowItWorks";
 import IPFSDemo from "./pages/IPFSDemo";
+import Reveal from "./pages/Reveal";
 
 import '@rainbow-me/rainbowkit/styles.css';
 
@@ -43,6 +44,7 @@ const App = () => (
               <Route path="/profile" element={<Profile />} />
               <Route path="/capsule/:id" element={<CapsuleDetail />} />
               <Route path="/how-it-works" element={<HowItWorks />} />
+              <Route path="/reveal" element={<Reveal />} />
               <Route path="/ipfs-demo" element={<IPFSDemo />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />

@@ -180,7 +180,11 @@ export class TimeCapsuleContract {
     
     // Store in localStorage temporarily for demo purposes
     const existingCapsules = JSON.parse(localStorage.getItem('timeCapsules') || '[]');
-    const newCapsule = {
+    
+    // Map visibility string to number
+    const visibilityMap = { 'private': 0, 'public': 1, 'friends': 2 } as const;
+    
+    const newCapsule: Capsule = {
       id: capsuleId,
       creator: 'user123',
       title: params.title,
@@ -189,9 +193,8 @@ export class TimeCapsuleContract {
       createdAt: Math.floor(Date.now() / 1000),
       isUnlocked: false,
       isRevealed: false,
-      visibility: params.visibility,
-      content: params.content,
-      ipfsHash: `mock_${Date.now()}`,
+      visibility: visibilityMap[params.visibility],
+      ipfsHash: params.content, // Use the actual IPFS CID passed in content
     };
     
     existingCapsules.push(newCapsule);

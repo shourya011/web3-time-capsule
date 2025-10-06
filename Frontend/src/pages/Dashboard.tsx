@@ -2,22 +2,30 @@ import { SpaceBackground } from '@/components/SpaceBackground';
 import { Navigation } from '@/components/Navigation';
 import { CosmicButton } from '@/components/CosmicButton';
 import { motion } from 'framer-motion';
-import { Lock, Unlock, Clock, Plus, Grid, List } from 'lucide-react';
+import { Lock, Unlock, Clock, Plus, Grid, List, Zap } from 'lucide-react';
 import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
-import { timeCapsuleContract, type TimeCapsule } from '@/lib/contract';
+import { timeCapsuleContract, type Capsule } from '@/lib/contract';
+import { Button } from '@/components/ui/button';
 
 // Memoized CapsuleCard component to prevent unnecessary re-renders
-const CapsuleCard = memo(({ capsule, index, calculateDaysUntil, getDisplayStatus, onNavigate }: {
-  capsule: TimeCapsule;
+const CapsuleCard = memo(({ capsule, index, calculateDaysUntil, getDisplayStatus, onNavigate, onRevealEarly }: {
+  capsule: Capsule;
   index: number;
   calculateDaysUntil: (unlockTime: number) => number;
   getDisplayStatus: (unlockTime: number) => string;
   onNavigate: (id: string) => void;
+  onRevealEarly: (id: string, unlockTime: number) => void;
 }) => {
   const statusDisplay = getDisplayStatus(capsule.unlockTime);
   const StatusIcon = statusDisplay === 'unlocked' ? Unlock : Lock;
+  const canRevealEarly = statusDisplay === 'locked' && Date.now() / 1000 < capsule.unlockTime;
+
+  const handleRevealEarly = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onRevealEarly(capsule.id, capsule.unlockTime);
+  };
 
   return (
     <motion.div
@@ -77,16 +85,20 @@ const CapsuleCard = memo(({ capsule, index, calculateDaysUntil, getDisplayStatus
         )}
       </div>
 
-      <div className="flex gap-2 mt-4">
-        {capsule.contentTypes.map((type) => (
-          <span
-            key={type}
-            className="text-xs px-2 py-1 rounded bg-accent/20 text-accent"
+      {/* Early Reveal Button */}
+      {canRevealEarly && (
+        <div className="mt-4 pt-4 border-t border-border/50">
+          <Button
+            onClick={handleRevealEarly}
+            variant="outline"
+            size="sm"
+            className="w-full group hover:cosmic-glow"
           >
-            {type}
-          </span>
-        ))}
-      </div>
+            <Zap className="w-4 h-4 mr-2 group-hover:text-primary transition-colors" />
+            Reveal Early
+          </Button>
+        </div>
+      )}
     </motion.div>
   );
 });
@@ -95,7 +107,7 @@ CapsuleCard.displayName = 'CapsuleCard';
 
 const Dashboard = () => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [capsules, setCapsules] = useState<TimeCapsule[]>([]);
+  const [capsules, setCapsules] = useState<Capsule[]>([]);
   const [loading, setLoading] = useState(true);
   
   const navigate = useNavigate();
@@ -105,10 +117,13 @@ const Dashboard = () => {
     if (!address) return;
     
     try {
-      const userCapsules = await timeCapsuleContract.getUserCapsules(address);
+      console.log('Loading user capsules...');
+      const userCapsules = await timeCapsuleContract.getUserCapsules();
+      console.log('Loaded capsules:', userCapsules);
       setCapsules(userCapsules);
     } catch (error) {
       console.error('Error loading capsules:', error);
+      setCapsules([]); // Ensure we set an empty array on error
     } finally {
       setLoading(false);
     }
@@ -134,7 +149,13 @@ const Dashboard = () => {
     return now >= unlockTime ? 'unlocked' : 'locked';
   }, []);
 
-  // Memoize stats to prevent constant recalculation
+  const handleRevealEarly = useCallback((capsuleId: string, unlockTime: number) => {
+    navigate(`/reveal?capsuleId=${capsuleId}&unlockTime=${unlockTime}`);
+  }, [navigate]);
+
+  const handleNavigate = useCallback((id: string) => {
+    navigate(`/capsule/${id}`);
+  }, [navigate]);
   const stats = useMemo(() => {
     const totalCapsules = capsules.length;
     const unlockedCount = capsules.filter((c) => Date.now() / 1000 >= c.unlockTime).length;
@@ -174,6 +195,22 @@ const Dashboard = () => {
       <Navigation />
 
       <div className="container mx-auto px-6 pt-32 pb-20">
+        {/* Debug info */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="mb-4 p-4 bg-gray-800 text-white rounded">
+            <p>Debug: Loading={loading.toString()}, Capsules={capsules.length}, Address={address}</p>
+            <button 
+              onClick={() => {
+                localStorage.removeItem('timeCapsules');
+                window.location.reload();
+              }}
+              className="mt-2 px-3 py-1 bg-red-600 text-white rounded text-sm"
+            >
+              Clear Test Data
+            </button>
+          </div>
+        )}
+        
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -306,7 +343,8 @@ const Dashboard = () => {
                   index={index}
                   calculateDaysUntil={calculateDaysUntil}
                   getDisplayStatus={getDisplayStatus}
-                  onNavigate={(id) => navigate(`/capsule/${id}`)}
+                  onNavigate={handleNavigate}
+                  onRevealEarly={handleRevealEarly}
                 />
               ))}
             </div>

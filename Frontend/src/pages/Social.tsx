@@ -1,80 +1,181 @@
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { 
+  Heart, 
+  MessageCircle, 
+  Share2, 
+  Clock, 
+  Shield, 
+  Calendar,
+  User,
+  SortDesc,
+  Eye,
+  Image,
+  FileText,
+  Video,
+  Music,
+  File,
+  Search
+} from 'lucide-react';
 import { SpaceBackground } from '@/components/SpaceBackground';
 import { Navigation } from '@/components/Navigation';
-import { motion } from 'framer-motion';
-import { Lock, Unlock, Clock, Eye, Heart, MessageCircle, Share2 } from 'lucide-react';
-import { useState } from 'react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Separator } from '@/components/ui/separator';
+import { useAccount } from 'wagmi';
+import { useToast } from '@/hooks/use-toast';
+import { revealService, type RevealedCapsule } from '@/lib/reveal';
 
-interface PublicCapsule {
-  id: string;
-  title: string;
-  creator: string;
-  createdDate: string;
-  unlockDate: string;
-  status: 'locked' | 'unlocked';
-  description: string;
-  views: number;
-  likes: number;
-  comments: number;
-}
+const Social: React.FC = () => {
+  const [revealedCapsules, setRevealedCapsules] = useState<RevealedCapsule[]>([]);
+  const [filteredCapsules, setFilteredCapsules] = useState<RevealedCapsule[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState<'all' | 'early' | 'recent'>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'popular'>('newest');
+  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [expandedCapsules, setExpandedCapsules] = useState<Set<string>>(new Set());
 
-const mockPublicCapsules: PublicCapsule[] = [
-  {
-    id: '1',
-    title: 'Letter to My Future Self',
-    creator: '0x742d...4a92',
-    createdDate: '2024-01-15',
-    unlockDate: '2025-01-15',
-    status: 'unlocked',
-    description: 'A heartfelt message about my dreams and aspirations for the future.',
-    views: 1247,
-    likes: 234,
-    comments: 45,
-  },
-  {
-    id: '2',
-    title: 'Wedding Memories',
-    creator: '0x892c...3b81',
-    createdDate: '2024-03-20',
-    unlockDate: '2029-03-20',
-    status: 'locked',
-    description: 'Our special day preserved for our 5th anniversary.',
-    views: 892,
-    likes: 156,
-    comments: 28,
-  },
-  {
-    id: '3',
-    title: 'Startup Journey',
-    creator: '0x123e...7c54',
-    createdDate: '2023-06-10',
-    unlockDate: '2024-06-10',
-    status: 'unlocked',
-    description: 'The complete story of building our company from scratch.',
-    views: 2341,
-    likes: 567,
-    comments: 89,
-  },
-  {
-    id: '4',
-    title: 'Family Time Capsule',
-    creator: '0x456f...9d23',
-    createdDate: '2024-02-14',
-    unlockDate: '2034-02-14',
-    status: 'locked',
-    description: 'Messages and photos for our children to open in 10 years.',
-    views: 453,
-    likes: 89,
-    comments: 12,
-  },
-];
+  const { address } = useAccount();
+  const { toast } = useToast();
 
-const Social = () => {
-  const [filter, setFilter] = useState<'all' | 'unlocked' | 'locked'>('all');
+  // Load revealed capsules on component mount
+  useEffect(() => {
+    loadRevealedCapsules();
+  }, []);
 
-  const filteredCapsules =
-    filter === 'all'
-      ? mockPublicCapsules
-      : mockPublicCapsules.filter((c) => c.status === filter);
+  // Filter and sort capsules when criteria change
+  useEffect(() => {
+    let filtered = [...revealedCapsules];
+
+    // Search filter
+    if (searchTerm) {
+      filtered = filtered.filter(capsule =>
+        capsule.originalData.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        capsule.originalData.description.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    // Type filter
+    if (filterType === 'early') {
+      filtered = filtered.filter(capsule => capsule.revealMetadata.isEarlyReveal);
+    } else if (filterType === 'recent') {
+      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+      filtered = filtered.filter(capsule => capsule.revealMetadata.revealedAt > oneDayAgo);
+    }
+
+    // Sort
+    filtered.sort((a, b) => {
+      switch (sortBy) {
+        case 'newest':
+          return b.revealMetadata.revealedAt - a.revealMetadata.revealedAt;
+        case 'oldest':
+          return a.revealMetadata.revealedAt - b.revealMetadata.revealedAt;
+        case 'popular':
+          return b.revealMetadata.socialInteractions.likes - a.revealMetadata.socialInteractions.likes;
+        default:
+          return 0;
+      }
+    });
+
+    setFilteredCapsules(filtered);
+  }, [revealedCapsules, searchTerm, filterType, sortBy]);
+
+  const loadRevealedCapsules = () => {
+    const capsules = revealService.getRevealedCapsules();
+    setRevealedCapsules(capsules);
+  };
+
+  const handleLike = (capsuleId: string) => {
+    const success = revealService.likeCapsule(capsuleId);
+    if (success) {
+      loadRevealedCapsules();
+      toast({
+        title: "Liked!",
+        description: "Your like has been recorded.",
+      });
+    } else {
+      toast({
+        title: "Error",
+        description: "Failed to like the capsule.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleComment = (capsuleId: string) => {
+    const comment = commentInputs[capsuleId]?.trim();
+    if (!comment || !address) return;
+
+    const success = revealService.addComment(capsuleId, address, comment);
+    if (success) {
+      setCommentInputs(prev => ({ ...prev, [capsuleId]: '' }));
+      loadRevealedCapsules();
+      toast({
+        title: "Comment added!",
+        description: "Your comment has been posted.",
+      });
+    } else {
+      toast({
+        title: "Error",
+        description: "Failed to add comment.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleShare = async (capsule: RevealedCapsule) => {
+    const url = `${window.location.origin}/social?capsule=${capsule.id}`;
+    try {
+      await navigator.share({
+        title: `Time Capsule: ${capsule.originalData.title}`,
+        text: capsule.originalData.description,
+        url,
+      });
+    } catch (error) {
+      // Fallback to clipboard
+      navigator.clipboard.writeText(url);
+      toast({
+        title: "Link copied!",
+        description: "Capsule link copied to clipboard.",
+      });
+    }
+  };
+
+  const toggleExpanded = (capsuleId: string) => {
+    setExpandedCapsules(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(capsuleId)) {
+        newSet.delete(capsuleId);
+      } else {
+        newSet.add(capsuleId);
+      }
+      return newSet;
+    });
+  };
+
+  const getFileIcon = (type: string) => {
+    if (type.startsWith('image/')) return Image;
+    if (type.startsWith('video/')) return Video;
+    if (type.startsWith('audio/')) return Music;
+    if (type.includes('text') || type.includes('document')) return FileText;
+    return File;
+  };
+
+  const formatTimeAgo = (timestamp: number) => {
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / (1000 * 60));
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return `${days}d ago`;
+  };
 
   return (
     <div className="min-h-screen">
@@ -82,131 +183,296 @@ const Social = () => {
       <Navigation />
 
       <div className="container mx-auto px-6 pt-32 pb-20">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-4xl mx-auto"
+        >
           {/* Header */}
           <div className="text-center mb-12">
             <h1 className="text-5xl font-heading font-bold mb-4 text-gradient">
-              Social Timeline
+              Social Feed
             </h1>
             <p className="text-xl text-muted-foreground">
-              Explore public time capsules from the community
+              Discover revealed time capsules from the community
             </p>
           </div>
 
-          {/* Filters */}
-          <div className="flex justify-center gap-4 mb-8">
-            {[
-              { key: 'all', label: 'All Capsules' },
-              { key: 'unlocked', label: 'Recently Unlocked' },
-              { key: 'locked', label: 'Locked' },
-            ].map((option) => (
-              <button
-                key={option.key}
-                onClick={() => setFilter(option.key as typeof filter)}
-                className={`px-6 py-2 rounded-full font-semibold transition-all ${
-                  filter === option.key
-                    ? 'cosmic-glow bg-primary text-white'
-                    : 'glass-panel text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+          {/* Filters and Search */}
+          <Card className="glass-panel mb-8">
+            <CardContent className="p-6">
+              <div className="flex flex-col lg:flex-row gap-4">
+                {/* Search */}
+                <div className="flex-1">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search capsules..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                </div>
+
+                {/* Filter */}
+                <div className="flex gap-2">
+                  <Button
+                    variant={filterType === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilterType('all')}
+                  >
+                    All
+                  </Button>
+                  <Button
+                    variant={filterType === 'early' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilterType('early')}
+                  >
+                    <Clock className="w-4 h-4 mr-1" />
+                    Early Reveals
+                  </Button>
+                  <Button
+                    variant={filterType === 'recent' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilterType('recent')}
+                  >
+                    Recent
+                  </Button>
+                </div>
+
+                {/* Sort */}
+                <div className="flex gap-2">
+                  <Button
+                    variant={sortBy === 'newest' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setSortBy('newest')}
+                  >
+                    <SortDesc className="w-4 h-4 mr-1" />
+                    Newest
+                  </Button>
+                  <Button
+                    variant={sortBy === 'popular' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setSortBy('popular')}
+                  >
+                    <Heart className="w-4 h-4 mr-1" />
+                    Popular
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Capsules Feed */}
-          <div className="max-w-3xl mx-auto space-y-6">
-            {filteredCapsules.map((capsule, index) => (
-              <motion.div
-                key={capsule.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-                className="glass-panel p-6 rounded-xl cosmic-glow-accent hover:cosmic-glow transition-all"
-              >
-                {/* Header */}
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center font-heading font-bold">
-                      {capsule.creator.slice(2, 4).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="font-semibold">{capsule.creator}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {new Date(capsule.createdDate).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                  <span
-                    className={`text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1 ${
-                      capsule.status === 'unlocked'
-                        ? 'bg-[hsl(var(--status-unlocked))]/20 text-[hsl(var(--status-unlocked))]'
-                        : 'bg-[hsl(var(--status-locked))]/20 text-[hsl(var(--status-locked))]'
-                    }`}
+          <div className="space-y-6">
+            {filteredCapsules.length === 0 ? (
+              <Card className="glass-panel">
+                <CardContent className="py-12 text-center">
+                  <Eye className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold mb-2">No revealed capsules found</h3>
+                  <p className="text-muted-foreground">
+                    {searchTerm || filterType !== 'all' 
+                      ? 'Try adjusting your search or filters'
+                      : 'Be the first to reveal a time capsule!'
+                    }
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              filteredCapsules.map((capsule) => {
+                const isExpanded = expandedCapsules.has(capsule.id);
+                const hasFiles = capsule.originalData.files && capsule.originalData.files.length > 0;
+
+                return (
+                  <motion.div
+                    key={capsule.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="glass-panel rounded-xl overflow-hidden"
                   >
-                    {capsule.status === 'unlocked' ? (
-                      <Unlock className="w-3 h-3" />
-                    ) : (
-                      <Lock className="w-3 h-3" />
-                    )}
-                    {capsule.status.toUpperCase()}
-                  </span>
-                </div>
+                    {/* Header */}
+                    <div className="p-6 pb-4">
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="w-10 h-10">
+                            <AvatarFallback>
+                              <User className="w-5 h-5" />
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="font-semibold">
+                              {`${capsule.originalData.creator.slice(0, 6)}...${capsule.originalData.creator.slice(-4)}`}
+                            </p>
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Calendar className="w-3 h-3" />
+                              <span>{formatTimeAgo(capsule.revealMetadata.revealedAt)}</span>
+                              {capsule.revealMetadata.isEarlyReveal && (
+                                <Badge variant="destructive" className="text-xs">
+                                  Early Reveal
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleShare(capsule)}
+                        >
+                          <Share2 className="w-4 h-4" />
+                        </Button>
+                      </div>
 
-                {/* Content */}
-                <h3 className="text-2xl font-heading font-bold mb-2">
-                  {capsule.title}
-                </h3>
-                <p className="text-muted-foreground mb-4">{capsule.description}</p>
+                      <div>
+                        <h3 className="text-xl font-heading font-bold mb-2">
+                          {capsule.originalData.title}
+                        </h3>
+                        {capsule.originalData.description && (
+                          <p className="text-muted-foreground mb-4">
+                            {capsule.originalData.description}
+                          </p>
+                        )}
+                        {capsule.revealMetadata.revealMessage && (
+                          <div className="bg-accent/20 border-l-4 border-accent pl-4 py-2 mb-4">
+                            <p className="text-sm italic">
+                              "{capsule.revealMetadata.revealMessage}"
+                            </p>
+                          </div>
+                        )}
+                      </div>
 
-                {/* Unlock Date */}
-                <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
-                  <Clock className="w-4 h-4" />
-                  <span>
-                    {capsule.status === 'unlocked' ? 'Unlocked on' : 'Unlocks on'}{' '}
-                    {new Date(capsule.unlockDate).toLocaleDateString()}
-                  </span>
-                </div>
+                      {/* Files Preview */}
+                      {hasFiles && (
+                        <div className="mb-4">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => toggleExpanded(capsule.id)}
+                            className="mb-3"
+                          >
+                            <FileText className="w-4 h-4 mr-2" />
+                            {capsule.originalData.files.length} file(s)
+                            {isExpanded ? ' - Hide' : ' - Show'}
+                          </Button>
 
-                {/* Stats & Actions */}
-                <div className="flex items-center justify-between pt-4 border-t border-white/10">
-                  <div className="flex items-center gap-6 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      <Eye className="w-4 h-4" />
-                      <span>{capsule.views}</span>
+                          {isExpanded && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="grid grid-cols-1 md:grid-cols-2 gap-3"
+                            >
+                              {capsule.originalData.files.map((file, index) => {
+                                const FileIcon = getFileIcon(file.type);
+                                return (
+                                  <div key={index} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
+                                    <FileIcon className="w-8 h-8 text-primary" />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-medium truncate">{file.name}</p>
+                                      <p className="text-xs text-muted-foreground">{file.type}</p>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </motion.div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          <Shield className="w-4 h-4" />
+                          <span>Created {new Date(capsule.originalData.createdAt).toLocaleDateString()}</span>
+                        </div>
+                        {capsule.revealMetadata.isEarlyReveal && (
+                          <div className="flex items-center gap-1">
+                            <Clock className="w-4 h-4" />
+                            <span>
+                              Originally locked until {new Date(capsule.revealMetadata.originalUnlockTime * 1000).toLocaleDateString()}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <button className="flex items-center gap-2 hover:text-primary transition-colors">
-                      <Heart className="w-4 h-4" />
-                      <span>{capsule.likes}</span>
-                    </button>
-                    <button className="flex items-center gap-2 hover:text-primary transition-colors">
-                      <MessageCircle className="w-4 h-4" />
-                      <span>{capsule.comments}</span>
-                    </button>
-                  </div>
-                  <button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors">
-                    <Share2 className="w-4 h-4" />
-                    <span>Share</span>
-                  </button>
-                </div>
-              </motion.div>
-            ))}
-          </div>
 
-          {/* Empty State */}
-          {filteredCapsules.length === 0 && (
-            <div className="text-center py-20">
-              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-muted mb-4">
-                <Lock className="w-10 h-10 text-muted-foreground" />
-              </div>
-              <h3 className="text-2xl font-heading font-bold mb-2">
-                No capsules found
-              </h3>
-              <p className="text-muted-foreground">
-                Try adjusting your filters to see more results
-              </p>
-            </div>
-          )}
+                    <Separator />
+
+                    {/* Interactions */}
+                    <div className="p-6 pt-4">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-4">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleLike(capsule.id)}
+                            className="flex items-center gap-2"
+                          >
+                            <Heart className="w-4 h-4" />
+                            <span>{capsule.revealMetadata.socialInteractions.likes}</span>
+                          </Button>
+                          <Button variant="ghost" size="sm" className="flex items-center gap-2">
+                            <MessageCircle className="w-4 h-4" />
+                            <span>{capsule.revealMetadata.socialInteractions.comments.length}</span>
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Comments */}
+                      {capsule.revealMetadata.socialInteractions.comments.length > 0 && (
+                        <div className="space-y-3 mb-4">
+                          {capsule.revealMetadata.socialInteractions.comments.map((comment) => (
+                            <div key={comment.id} className="flex gap-3">
+                              <Avatar className="w-8 h-8">
+                                <AvatarFallback>
+                                  <User className="w-4 h-4" />
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="flex-1">
+                                <div className="bg-muted/50 rounded-lg p-3">
+                                  <p className="font-semibold text-sm mb-1">
+                                    {`${comment.author.slice(0, 6)}...${comment.author.slice(-4)}`}
+                                  </p>
+                                  <p className="text-sm">{comment.content}</p>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {formatTimeAgo(comment.timestamp)}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add Comment */}
+                      {address && (
+                        <div className="flex gap-2">
+                          <Textarea
+                            placeholder="Add a comment..."
+                            value={commentInputs[capsule.id] || ''}
+                            onChange={(e) => setCommentInputs(prev => ({
+                              ...prev,
+                              [capsule.id]: e.target.value
+                            }))}
+                            className="resize-none"
+                            rows={2}
+                          />
+                          <Button
+                            onClick={() => handleComment(capsule.id)}
+                            disabled={!commentInputs[capsule.id]?.trim()}
+                            size="sm"
+                            className="self-end"
+                          >
+                            Post
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })
+            )}
+          </div>
         </motion.div>
       </div>
     </div>
