@@ -89,9 +89,9 @@ class RevealService {
       console.log('📥 Fetching encrypted content from IPFS...', ipfsCid);
       let encryptedContent: string;
       
-      // Handle mock IPFS hashes for testing - check both CID format and timestamp-based capsule IDs
-      if (ipfsCid.startsWith('mock_') || capsuleId.match(/^\d{13}$/)) {
-        console.log('🎭 Detected mock scenario (CID or timestamp capsule ID) - bypassing all encryption/decryption');
+      // Handle mock IPFS hashes for testing - only check CID format, not timestamp-based capsule IDs
+      if (ipfsCid.startsWith('mock_')) {
+        console.log('🎭 Detected mock scenario (mock CID) - bypassing all encryption/decryption');
         
         // For testing purposes, simulate successful decryption without IPFS
         const mockDecryptedContent: DecryptedCapsuleContent = {
@@ -305,6 +305,13 @@ class RevealService {
     localStorage.setItem(this.REVEALED_CAPSULES_KEY, JSON.stringify(filteredRevealed));
   }
 
+  // Clear all revealed capsules from local storage
+  clearAllRevealedCapsules(): void {
+    localStorage.removeItem(this.REVEALED_CAPSULES_KEY);
+    localStorage.removeItem(this.SOCIAL_INTERACTIONS_KEY);
+    console.log('🗑️ Cleared all revealed capsules from social feed');
+  }
+
   private async getCapsuleIPFSHash(capsuleId: string): Promise<string | null> {
     try {
       // Try to get from localStorage first (for demo purposes)
@@ -334,6 +341,193 @@ class RevealService {
     // In a real implementation, you would also check if the user is in the recipients list
     // For now, we'll just check the creator
     return false;
+  }
+
+  // Preview capsule content without revealing (bypasses "already revealed" check)
+  async previewCapsule(
+    capsuleId: string,
+    recoveryKit: RecoveryKit,
+    userAddress: string,
+    originalUnlockTime: number
+  ): Promise<RevealResult> {
+    try {
+      console.log('👀 Starting capsule preview process...', { capsuleId, userAddress });
+
+      // Validate recovery kit
+      const validation = cryptoService.validateRecoveryKit(recoveryKit);
+      if (!validation.isValid) {
+        return {
+          success: false,
+          error: validation.error || 'Invalid recovery kit',
+        };
+      }
+
+      // Mock capsule validation (bypass ID check for development)
+      if (capsuleId.startsWith('mock_')) {
+        console.log('🎭 Mock capsule - bypassing capsule ID validation');
+      }
+
+      // Get IPFS CID for this capsule (from localStorage or contract)
+      const ipfsCid = await this.getCapsuleIPFSHash(capsuleId);
+      if (!ipfsCid) {
+        return {
+          success: false,
+          error: 'Unable to locate capsule data on IPFS',
+        };
+      }
+
+      let decryptedContent: DecryptedCapsuleContent;
+      
+      // Handle mock IPFS hashes for testing - only check CID format, not timestamp-based capsule IDs
+      if (ipfsCid.startsWith('mock_')) {
+        console.log('🎭 Detected mock scenario (mock CID) - bypassing all encryption/decryption');
+        
+        // For testing purposes, simulate successful decryption without IPFS
+        decryptedContent = {
+          title: "Test Time Capsule", 
+          description: "This is a test capsule for early reveal functionality",
+          files: [],
+          createdAt: Date.now(),
+          creator: userAddress
+        };
+      } else {
+        // Real IPFS decryption logic
+        try {
+          console.log('📥 Downloading from IPFS for preview...', ipfsCid);
+          const encryptedContent = await ipfsService.download(ipfsCid);
+          console.log('✅ Successfully downloaded from IPFS for preview, length:', encryptedContent.length);
+          
+          console.log('🔐 Decrypting capsule content for preview...');
+          decryptedContent = await cryptoService.decryptCapsuleContent(encryptedContent, recoveryKit);
+          console.log('✅ Capsule content decrypted successfully for preview!');
+        } catch (error) {
+          console.error('❌ Failed to decrypt real capsule for preview:', error);
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to decrypt capsule content',
+          };
+        }
+      }
+
+      // Verify user authorization
+      if (!this.isUserAuthorized(decryptedContent, userAddress)) {
+        return {
+          success: false,
+          error: 'You are not authorized to access this capsule',
+        };
+      }
+
+      const isEarlyReveal = Date.now() < originalUnlockTime * 1000;
+
+      // Create preview data (similar to revealed capsule but for preview only)
+      const previewData: RevealedCapsule = {
+        id: capsuleId,
+        originalData: decryptedContent,
+        revealMetadata: {
+          revealedAt: Date.now(),
+          revealedBy: userAddress,
+          isEarlyReveal,
+          originalUnlockTime,
+          socialInteractions: {
+            likes: 0,
+            comments: [],
+          },
+        },
+      };
+
+      console.log('✅ Capsule preview loaded successfully!', { capsuleId, isEarlyReveal });
+
+      return {
+        success: true,
+        data: previewData,
+      };
+    } catch (error) {
+      console.error('❌ Failed to preview capsule:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  // Auto-reveal naturally unlocked capsules and add them to social feed
+  async checkAndRevealUnlockedCapsules(userAddress: string): Promise<number> {
+    try {
+      console.log('🕐 Checking for naturally unlocked capsules...', userAddress);
+      
+      const currentTime = Date.now() / 1000;
+      let autoRevealedCount = 0;
+      
+      // Get all capsules from localStorage (in real app, this would be from the contract)
+      const storedCapsules = JSON.parse(localStorage.getItem('timeCapsules') || '[]');
+      // For demo purposes, check all capsules that the user might have access to
+      // In a real app, this would be filtered by contract ownership/permissions
+      const accessibleCapsules = storedCapsules;
+      
+      // Get recovery kits for decryption
+      const recoveryKits = JSON.parse(localStorage.getItem('capsuleKeys') || '[]');
+      
+      console.log(`📋 Found ${accessibleCapsules.length} total capsules and ${recoveryKits.length} recovery kits`);
+      
+      // Check each capsule to see if it's naturally unlocked
+      for (const capsule of accessibleCapsules) {
+        console.log(`🔍 Checking capsule "${capsule.title}" (ID: ${capsule.id})`);
+        console.log(`   Unlock time: ${capsule.unlockTime} (${new Date(capsule.unlockTime * 1000).toLocaleString()})`);
+        console.log(`   Current time: ${currentTime} (${new Date(currentTime * 1000).toLocaleString()})`);
+        
+        const isNaturallyUnlocked = currentTime >= capsule.unlockTime;
+        const isAlreadyRevealed = this.getRevealedCapsule(capsule.id) !== null;
+        
+        console.log(`   Is naturally unlocked: ${isNaturallyUnlocked}`);
+        console.log(`   Is already revealed: ${isAlreadyRevealed}`);
+        
+        if (isNaturallyUnlocked && !isAlreadyRevealed) {
+          // Find the recovery kit for this capsule
+          const recoveryKit = recoveryKits.find((kit: { capsuleId: string; ipfsCid: string }) => 
+            kit.capsuleId === capsule.id || kit.ipfsCid === capsule.ipfsHash
+          );
+          
+          console.log(`   Recovery kit found: ${!!recoveryKit}`);
+          if (recoveryKit) {
+            console.log(`   Recovery kit details:`, { capsuleId: recoveryKit.capsuleId, ipfsCid: recoveryKit.ipfsCid });
+          }
+          
+          if (recoveryKit) {
+            console.log(`🔓 Auto-revealing naturally unlocked capsule: ${capsule.id}`);
+            
+            try {
+              const revealResult = await this.revealCapsule(
+                capsule.id,
+                recoveryKit,
+                userAddress,
+                capsule.unlockTime,
+                'Automatically revealed when unlock time was reached'
+              );
+              
+              if (revealResult.success) {
+                autoRevealedCount++;
+                console.log(`✅ Successfully auto-revealed capsule: ${capsule.id}`);
+              } else {
+                console.warn(`⚠️ Failed to auto-reveal capsule ${capsule.id}:`, revealResult.error);
+              }
+            } catch (error) {
+              console.error(`❌ Error auto-revealing capsule ${capsule.id}:`, error);
+            }
+          } else {
+            console.warn(`⚠️ No recovery kit found for unlocked capsule: ${capsule.id}`);
+          }
+        }
+      }
+      
+      if (autoRevealedCount > 0) {
+        console.log(`🎉 Auto-revealed ${autoRevealedCount} naturally unlocked capsules!`);
+      }
+      
+      return autoRevealedCount;
+    } catch (error) {
+      console.error('❌ Failed to check unlocked capsules:', error);
+      return 0;
+    }
   }
 }
 

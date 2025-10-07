@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Heart, 
@@ -15,7 +15,8 @@ import {
   Video,
   Music,
   File,
-  Search
+  Search,
+  Trash2
 } from 'lucide-react';
 import { SpaceBackground } from '@/components/SpaceBackground';
 import { Navigation } from '@/components/Navigation';
@@ -42,10 +43,53 @@ const Social: React.FC = () => {
   const { address } = useAccount();
   const { toast } = useToast();
 
-  // Load revealed capsules on component mount
+  // Function to check for automatically unlocked capsules
+  const checkForUnlockedCapsules = useCallback(async () => {
+    if (!address) return;
+    
+    try {
+      console.log('🕐 Checking for auto-unlocked capsules...');
+      const autoRevealedCount = await revealService.checkAndRevealUnlockedCapsules(address);
+      
+      if (autoRevealedCount > 0) {
+        // Reload revealed capsules to show newly unlocked ones
+        const capsules = revealService.getRevealedCapsules();
+        setRevealedCapsules(capsules);
+        
+        toast({
+          title: "🎉 Capsules Unlocked!",
+          description: `${autoRevealedCount} time capsule${autoRevealedCount > 1 ? 's have' : ' has'} reached ${autoRevealedCount > 1 ? 'their' : 'its'} unlock time and appeared in the social feed!`,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to check for unlocked capsules:', error);
+    }
+  }, [address, toast]);
+
+  // Load revealed capsules on component mount and check for auto-unlocked ones
   useEffect(() => {
-    loadRevealedCapsules();
-  }, []);
+    const capsules = revealService.getRevealedCapsules();
+    setRevealedCapsules(capsules);
+  }, [address]);
+
+  // Auto-check for unlocked capsules whenever user address changes
+  useEffect(() => {
+    if (address) {
+      checkForUnlockedCapsules();
+    }
+  }, [address, checkForUnlockedCapsules]);
+
+  // Periodic check for unlocked capsules every 2 minutes
+  useEffect(() => {
+    if (!address) return;
+    
+    const interval = setInterval(() => {
+      console.log('🔄 Periodic check for unlocked capsules...');
+      checkForUnlockedCapsules();
+    }, 2 * 60 * 1000); // Check every 2 minutes
+    
+    return () => clearInterval(interval);
+  }, [address, checkForUnlockedCapsules]);
 
   // Filter and sort capsules when criteria change
   useEffect(() => {
@@ -87,6 +131,18 @@ const Social: React.FC = () => {
   const loadRevealedCapsules = () => {
     const capsules = revealService.getRevealedCapsules();
     setRevealedCapsules(capsules);
+  };
+
+  const handleClearAll = () => {
+    if (window.confirm('Are you sure you want to clear all revealed capsules from the social feed? This action cannot be undone.')) {
+      revealService.clearAllRevealedCapsules();
+      loadRevealedCapsules();
+      toast({
+        title: "Cleared!",
+        description: "All revealed capsules have been removed from the social feed.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleLike = (capsuleId: string) => {
@@ -260,6 +316,37 @@ const Social: React.FC = () => {
                     Popular
                   </Button>
                 </div>
+
+                {/* Clear All Button */}
+                {revealedCapsules.length > 0 && (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleClearAll}
+                      className="hover:bg-red-600"
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      Clear All
+                    </Button>
+                  </div>
+                )}
+
+                {/* Debug: Manual Auto-Unlock Check */}
+                <div className="flex gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      console.log('🧪 Manual auto-unlock check triggered');
+                      checkForUnlockedCapsules();
+                    }}
+                    disabled={!address}
+                  >
+                    <Clock className="w-4 h-4 mr-1" />
+                    Check Unlocked
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -332,13 +419,6 @@ const Social: React.FC = () => {
                           <p className="text-muted-foreground mb-4">
                             {capsule.originalData.description}
                           </p>
-                        )}
-                        {capsule.revealMetadata.revealMessage && (
-                          <div className="bg-accent/20 border-l-4 border-accent pl-4 py-2 mb-4">
-                            <p className="text-sm italic">
-                              "{capsule.revealMetadata.revealMessage}"
-                            </p>
-                          </div>
                         )}
                       </div>
 

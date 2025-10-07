@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { timeCapsuleContract, type Capsule } from '@/lib/contract';
+import { revealService } from '@/lib/reveal';
 import { Button } from '@/components/ui/button';
 
 // Memoized CapsuleCard component to prevent unnecessary re-renders
@@ -14,12 +15,12 @@ const CapsuleCard = memo(({ capsule, index, calculateDaysUntil, getDisplayStatus
   capsule: Capsule;
   index: number;
   calculateDaysUntil: (unlockTime: number) => number;
-  getDisplayStatus: (unlockTime: number) => string;
+  getDisplayStatus: (capsuleId: string, unlockTime: number) => string;
   onNavigate: (id: string) => void;
   onRevealEarly: (id: string, unlockTime: number) => void;
 }) => {
-  const statusDisplay = getDisplayStatus(capsule.unlockTime);
-  const StatusIcon = statusDisplay === 'unlocked' ? Unlock : Lock;
+  const statusDisplay = getDisplayStatus(capsule.id, capsule.unlockTime);
+  const StatusIcon = statusDisplay === 'unlocked' || statusDisplay === 'revealed' ? Unlock : Lock;
   const canRevealEarly = statusDisplay === 'locked' && Date.now() / 1000 < capsule.unlockTime;
 
   const handleRevealEarly = (e: React.MouseEvent) => {
@@ -40,23 +41,29 @@ const CapsuleCard = memo(({ capsule, index, calculateDaysUntil, getDisplayStatus
       <div className="flex items-start justify-between mb-4">
         <div
           className={`p-3 rounded-full ${
-            statusDisplay === 'unlocked'
+            statusDisplay === 'unlocked' || statusDisplay === 'revealed'
               ? 'bg-green-500/20'
               : 'bg-[hsl(var(--status-locked))]/20'
           }`}
         >
           <StatusIcon
-            className={`w-6 h-6 ${statusDisplay === 'unlocked' ? 'text-green-500' : 'text-[hsl(var(--status-locked))]'}`}
+            className={`w-6 h-6 ${
+              statusDisplay === 'unlocked' || statusDisplay === 'revealed' 
+                ? 'text-green-500' 
+                : 'text-[hsl(var(--status-locked))]'
+            }`}
           />
         </div>
         <span
           className={`text-xs font-semibold px-3 py-1 rounded-full ${
             statusDisplay === 'unlocked'
               ? 'bg-green-500/20 text-green-500'
+              : statusDisplay === 'revealed'
+              ? 'bg-blue-500/20 text-blue-500'
               : 'bg-[hsl(var(--status-locked))]/20 text-[hsl(var(--status-locked))]'
           }`}
         >
-          {statusDisplay.toUpperCase()}
+          {statusDisplay === 'revealed' ? 'EARLY REVEALED' : statusDisplay.toUpperCase()}
         </span>
       </div>
 
@@ -118,6 +125,11 @@ const Dashboard = () => {
     
     try {
       console.log('Loading user capsules...');
+      
+      // First, check for auto-unlocked capsules
+      console.log('🕐 Checking for auto-unlocked capsules...');
+      await revealService.checkAndRevealUnlockedCapsules(address);
+      
       const userCapsules = await timeCapsuleContract.getUserCapsules();
       console.log('Loaded capsules:', userCapsules);
       setCapsules(userCapsules);
@@ -144,8 +156,16 @@ const Dashboard = () => {
     return days > 0 ? days : 0;
   }, []);
 
-  const getDisplayStatus = useCallback((unlockTime: number) => {
+  const getDisplayStatus = useCallback((capsuleId: string, unlockTime: number) => {
     const now = Date.now() / 1000;
+    
+    // Check if capsule was revealed early
+    const revealedCapsule = revealService.getRevealedCapsule(capsuleId);
+    if (revealedCapsule) {
+      return 'revealed';
+    }
+    
+    // Check if capsule is naturally unlocked
     return now >= unlockTime ? 'unlocked' : 'locked';
   }, []);
 
@@ -158,7 +178,10 @@ const Dashboard = () => {
   }, [navigate]);
   const stats = useMemo(() => {
     const totalCapsules = capsules.length;
-    const unlockedCount = capsules.filter((c) => Date.now() / 1000 >= c.unlockTime).length;
+    const unlockedCount = capsules.filter((c) => {
+      const status = getDisplayStatus(c.id, c.unlockTime);
+      return status === 'unlocked' || status === 'revealed';
+    }).length;
     const nextUnlockDays = capsules.length > 0 
       ? calculateDaysUntil(Math.min(...capsules.map(c => c.unlockTime)))
       : 0;
@@ -168,7 +191,7 @@ const Dashboard = () => {
       unlockedCount,
       nextUnlockDays
     };
-  }, [capsules, calculateDaysUntil]);
+  }, [capsules, calculateDaysUntil, getDisplayStatus]);
 
   if (!isConnected) {
     return (
