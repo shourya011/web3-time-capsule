@@ -128,7 +128,7 @@ export function useCreateCapsule() {
       const recoveryKit = {
         key: BrowserBuffer.arrayBufferToBase64(encryptedData.key),
         iv: BrowserBuffer.arrayBufferToBase64(encryptedData.iv),
-        capsuleId: ipfsResult.cid,
+        capsuleId: 'pending', // Will be updated with actual capsule ID from contract
         ipfsCid: ipfsResult.cid,
       };
       
@@ -136,29 +136,29 @@ export function useCreateCapsule() {
       existingKeys.push(recoveryKit);
       localStorage.setItem('capsuleKeys', JSON.stringify(existingKeys));
       
-      // For now, simulate contract call since deployment isn't ready
-      // TODO: Uncomment when contract is deployed
-      /*
-      return writeContract({
+      // Step 7: Deploy to blockchain - CONTRACT IS NOW DEPLOYED!
+      console.log('🚀 Deploying capsule to Base Sepolia blockchain...');
+      
+      const result = await writeContract({
         address: CONTRACT_ADDRESS,
         abi: TIME_CAPSULE_ABI,
         functionName: 'createCapsule',
         args: [
-          2, // CapsuleType.ENCRYPTED
-          hashHex, // contentHash
-          ipfsResult.cid, // contentRef (IPFS CID)
-          unlockTime,
-          params.recipients || [], // recipients
-          visibility === 1 // isPublic
+          2, // CapsuleType.ENCRYPTED (uint8)
+          hashHex as `0x${string}`, // contentHash (bytes32)
+          ipfsResult.cid, // contentRef (string)
+          BigInt(unlockTime), // unlockTime (uint64)
+          params.recipients || [], // recipients (string[])
+          visibility === 1 // isPublic (bool)
         ],
-        value: protocolFee,
+        value: BigInt(protocolFee),
       });
-      */
       
-      console.log('🎉 Capsule created successfully!');
+      console.log('🎉 Capsule created successfully on blockchain!');
       console.log('📝 Recovery kit stored locally');
+      console.log('🔗 Transaction hash:', result);
       
-      return Promise.resolve(`0x${Date.now().toString(16)}`);
+      return result;
       
     } catch (error) {
       console.error('❌ Failed to create capsule:', error);

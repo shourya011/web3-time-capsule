@@ -54,7 +54,7 @@ const Reveal: React.FC = () => {
     setValidatedKit(kit);
     setError(null);
     setStep('reveal');
-    setShowRevealModal(true);
+    // Don't automatically open modal - let user click reveal button
   };
 
   const handleKitError = (error: string) => {

@@ -45,7 +45,10 @@ export const EarlyRevealModal: React.FC<EarlyRevealModalProps> = ({
   recoveryKit,
   onRevealComplete,
 }) => {
-  const [step, setStep] = useState<'preview' | 'confirm' | 'revealing' | 'complete'>('preview');
+  const isEarlyReveal = Date.now() < originalUnlockTime * 1000;
+  const [step, setStep] = useState<'reason' | 'preview' | 'confirm' | 'revealing' | 'complete'>(
+    isEarlyReveal ? 'reason' : 'preview'
+  );
   const [decryptedContent, setDecryptedContent] = useState<DecryptedCapsuleContent | null>(null);
   const [decryptedFiles, setDecryptedFiles] = useState<Array<{
     name: string;
@@ -54,32 +57,35 @@ export const EarlyRevealModal: React.FC<EarlyRevealModalProps> = ({
     url: string;
   }>>([]);
   const [revealMessage, setRevealMessage] = useState('');
+  const [earlyRevealReason, setEarlyRevealReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [revealedCapsule, setRevealedCapsule] = useState<RevealedCapsule | null>(null);
 
   const { address } = useAccount();
   const { toast } = useToast();
 
-  const isEarlyReveal = Date.now() < originalUnlockTime * 1000;
-
-  // Decrypt content when modal opens
-  useEffect(() => {
-    if (isOpen && !decryptedContent) {
-      decryptContent();
+  // Reset state when modal closes
+  React.useEffect(() => {
+    if (!isOpen) {
+      setDecryptedContent(null);
+      setDecryptedFiles([]);
+      setRevealMessage('');
+      setEarlyRevealReason('');
+      setError(null);
+      setRevealedCapsule(null);
     }
-  }, [isOpen, decryptedContent]);
+  }, [isOpen]);
 
   const decryptContent = useCallback(async () => {
     try {
       setError(null);
       
-      // Use the reveal service to decrypt content
-      const result = await revealService.revealCapsule(
+      // Use the preview service to decrypt content (bypasses "already revealed" check)
+      const result = await revealService.previewCapsule(
         capsuleId,
         recoveryKit,
         address || '',
-        originalUnlockTime,
-        undefined // No reveal message yet, just for preview
+        originalUnlockTime
       );
 
       if (!result.success || !result.data) {
@@ -98,12 +104,12 @@ export const EarlyRevealModal: React.FC<EarlyRevealModalProps> = ({
     }
   }, [capsuleId, recoveryKit, address, originalUnlockTime]);
 
-  // Decrypt content when modal opens
+  // Decrypt content when we reach preview step
   useEffect(() => {
-    if (isOpen && !decryptedContent) {
+    if (step === 'preview' && !decryptedContent) {
       decryptContent();
     }
-  }, [isOpen, decryptedContent, decryptContent]);
+  }, [step, decryptedContent, decryptContent]);
 
   const handleReveal = async () => {
     if (!address || !decryptedContent) {
@@ -119,12 +125,20 @@ export const EarlyRevealModal: React.FC<EarlyRevealModalProps> = ({
       setStep('revealing');
       setError(null);
 
+      // Combine reveal message with early reveal reason if applicable
+      let finalRevealMessage = revealMessage.trim();
+      if (isEarlyReveal && earlyRevealReason.trim()) {
+        finalRevealMessage = finalRevealMessage 
+          ? `${earlyRevealReason.trim()}\n\n${finalRevealMessage}`
+          : earlyRevealReason.trim();
+      }
+
       const result = await revealService.revealCapsule(
         capsuleId,
         recoveryKit,
         address,
         originalUnlockTime,
-        revealMessage.trim() || undefined
+        finalRevealMessage || undefined
       );
 
       if (!result.success || !result.data) {
@@ -179,6 +193,7 @@ export const EarlyRevealModal: React.FC<EarlyRevealModalProps> = ({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
           className="w-full max-w-4xl max-h-[90vh] overflow-auto glass-panel rounded-xl"
+          onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-white/10">
@@ -210,101 +225,194 @@ export const EarlyRevealModal: React.FC<EarlyRevealModalProps> = ({
 
           {/* Content */}
           <div className="p-6">
-            {step === 'preview' && decryptedContent && (
+            
+            {step === 'reason' && isEarlyReveal && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="space-y-6"
               >
-                {/* Warning for early reveal */}
-                {isEarlyReveal && (
-                  <Alert variant="destructive">
-                    <Clock className="w-4 h-4" />
-                    <AlertDescription>
-                      <strong>Early Reveal Warning:</strong> This capsule is not yet due to unlock 
-                      (scheduled for {new Date(originalUnlockTime * 1000).toLocaleDateString()}). 
-                      Revealing it early will make it public immediately.
-                    </AlertDescription>
-                  </Alert>
-                )}
+                <div className="space-y-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <AlertTriangle className="w-5 h-5 text-orange-500" />
+                        Early Reveal Request
+                      </CardTitle>
+                      <CardDescription>
+                        This capsule is scheduled to unlock on {new Date(originalUnlockTime * 1000).toLocaleDateString()}. 
+                        Tell us why you want to reveal it early.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <Alert variant="destructive">
+                        <Clock className="w-4 h-4" />
+                        <AlertDescription>
+                          <strong>Warning:</strong> Early reveals cannot be undone. Once revealed, 
+                          your capsule will be publicly visible before its scheduled time.
+                        </AlertDescription>
+                      </Alert>
 
-                {/* Content Preview */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Eye className="w-5 h-5" />
-                      Content Preview
-                    </CardTitle>
-                    <CardDescription>
-                      Review your capsule content before revealing
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div>
-                      <Label className="text-sm font-semibold">Title</Label>
-                      <p className="text-lg font-medium mt-1">{decryptedContent.title}</p>
-                    </div>
-
-                    {decryptedContent.description && (
                       <div>
-                        <Label className="text-sm font-semibold">Description</Label>
-                        <p className="mt-1 text-muted-foreground">{decryptedContent.description}</p>
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <Label className="text-sm font-semibold">Created</Label>
-                        <p className="mt-1">{new Date(decryptedContent.createdAt).toLocaleDateString()}</p>
-                      </div>
-                      <div>
-                        <Label className="text-sm font-semibold">Creator</Label>
-                        <p className="mt-1 font-mono text-xs">
-                          {`${decryptedContent.creator.slice(0, 6)}...${decryptedContent.creator.slice(-4)}`}
+                        <Label htmlFor="early-reveal-reason">Why do you want to reveal this capsule early? *</Label>
+                        <Textarea
+                          id="early-reveal-reason"
+                          value={earlyRevealReason}
+                          onChange={(e) => setEarlyRevealReason(e.target.value)}
+                          placeholder="Please explain your reason for early reveal (e.g., special occasion, changed circumstances, etc.)"
+                          className="mt-2"
+                          maxLength={500}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {earlyRevealReason.length}/500 characters
                         </p>
                       </div>
-                    </div>
 
-                    {decryptedFiles.length > 0 && (
-                      <div>
-                        <Label className="text-sm font-semibold mb-3 block">
-                          Files ({decryptedFiles.length})
-                        </Label>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {decryptedFiles.map((file, index) => {
-                            const FileIcon = getFileIcon(file.type);
-                            return (
-                              <div key={index} className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                                {file.type.startsWith('image/') ? (
-                                  <img 
-                                    src={file.url} 
-                                    alt={file.name}
-                                    className="w-10 h-10 object-cover rounded"
-                                  />
-                                ) : (
-                                  <FileIcon className="w-10 h-10 text-primary" />
-                                )}
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-medium truncate">{file.name}</p>
-                                  <p className="text-xs text-muted-foreground">{file.type}</p>
-                                </div>
-                              </div>
-                            );
-                          })}
+                      <div className="bg-muted/50 p-4 rounded-lg">
+                        <h4 className="font-semibold mb-2">Scheduled unlock information:</h4>
+                        <div className="space-y-1 text-sm">
+                          <div className="flex justify-between">
+                            <span>Original unlock date:</span>
+                            <span className="font-semibold">{new Date(originalUnlockTime * 1000).toLocaleDateString()}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Days remaining:</span>
+                            <span className="font-semibold text-orange-500">
+                              {Math.ceil((originalUnlockTime * 1000 - Date.now()) / (1000 * 60 * 60 * 24))} days
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
 
-                <div className="flex justify-end gap-3">
-                  <Button variant="outline" onClick={onClose}>
-                    Cancel
-                  </Button>
-                  <Button onClick={() => setStep('confirm')} className="cosmic-glow">
-                    Continue to Reveal
-                  </Button>
+                  <div className="flex justify-end gap-3">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                      Cancel
+                    </Button>
+                    <Button 
+                      type="button"
+                      onClick={() => setStep('preview')}
+                      disabled={!earlyRevealReason.trim()}
+                      className="cosmic-glow"
+                    >
+                      Continue to Preview
+                    </Button>
+                  </div>
                 </div>
+              </motion.div>
+            )}
+
+            {step === 'preview' && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-6"
+              >
+                {!decryptedContent ? (
+                  <div className="text-center py-12">
+                    <div className="w-12 h-12 animate-spin text-primary mx-auto mb-4">⏳</div>
+                    <h3 className="text-lg font-semibold mb-2">Decrypting Content...</h3>
+                    <p className="text-muted-foreground">
+                      Please wait while we decrypt your capsule content
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Warning for early reveal */}
+                    {isEarlyReveal && (
+                      <Alert variant="destructive">
+                        <Clock className="w-4 h-4" />
+                        <AlertDescription>
+                          <strong>Early Reveal Warning:</strong> This capsule is not yet due to unlock 
+                          (scheduled for {new Date(originalUnlockTime * 1000).toLocaleDateString()}). 
+                          Revealing it early will make it public immediately.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {/* Content Preview */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Eye className="w-5 h-5" />
+                          Content Preview
+                        </CardTitle>
+                        <CardDescription>
+                          Review your capsule content before revealing
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div>
+                          <Label className="text-sm font-semibold">Title</Label>
+                          <p className="text-lg font-medium mt-1">{decryptedContent.title}</p>
+                        </div>
+
+                        {decryptedContent.description && (
+                          <div>
+                            <Label className="text-sm font-semibold">Description</Label>
+                            <p className="mt-1 text-muted-foreground">{decryptedContent.description}</p>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <Label className="text-sm font-semibold">Created</Label>
+                            <p className="mt-1">{new Date(decryptedContent.createdAt).toLocaleDateString()}</p>
+                          </div>
+                          <div>
+                            <Label className="text-sm font-semibold">Creator</Label>
+                            <p className="mt-1 font-mono text-xs">
+                              {`${decryptedContent.creator.slice(0, 6)}...${decryptedContent.creator.slice(-4)}`}
+                            </p>
+                          </div>
+                        </div>
+
+                        {decryptedFiles.length > 0 && (
+                          <div>
+                            <Label className="text-sm font-semibold mb-3 block">
+                              Files ({decryptedFiles.length})
+                            </Label>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {decryptedFiles.map((file, index) => {
+                                const FileIcon = getFileIcon(file.type);
+                                return (
+                                  <div key={index} className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+                                    {file.type.startsWith('image/') ? (
+                                      <img 
+                                        src={file.url} 
+                                        alt={file.name}
+                                        className="w-10 h-10 object-cover rounded"
+                                      />
+                                    ) : (
+                                      <FileIcon className="w-10 h-10 text-primary" />
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-medium truncate">{file.name}</p>
+                                      <p className="text-xs text-muted-foreground">{file.type}</p>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <div className="flex justify-end gap-3">
+                      <Button 
+                        variant="outline" 
+                        onClick={isEarlyReveal ? () => setStep('reason') : onClose}
+                      >
+                        {isEarlyReveal ? 'Back' : 'Cancel'}
+                      </Button>
+                      <Button onClick={() => setStep('confirm')} className="cosmic-glow">
+                        Continue to Reveal
+                      </Button>
+                    </div>
+                  </>
+                )}
               </motion.div>
             )}
 
