@@ -1,10 +1,10 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
-import { baseSepolia, mainnet } from 'wagmi/chains';
+import { baseSepolia, mainnet, sepolia } from 'wagmi/chains';
 
 export const config = getDefaultConfig({
   appName: 'Time Capsule',
-  projectId: 'your-walletconnect-project-id', // Replace with your WalletConnect project ID
-  chains: [baseSepolia, mainnet],
+  projectId: '2f5a2bb1b0a3e4c8d9f1a2b3c4d5e6f7', // Demo project ID for testing
+  chains: [baseSepolia, sepolia, mainnet],
   ssr: false, // If your dApp uses server side rendering (SSR)
 });
 

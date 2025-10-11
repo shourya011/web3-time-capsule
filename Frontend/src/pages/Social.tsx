@@ -30,6 +30,8 @@ import { Separator } from '@/components/ui/separator';
 import { useAccount } from 'wagmi';
 import { useToast } from '@/hooks/use-toast';
 import { revealService, type RevealedCapsule } from '@/lib/reveal';
+import { MessageThread } from '@/components/Messaging/MessageThread';
+import { PaymentModal } from '@/components/Messaging/PaymentModal';
 
 const Social: React.FC = () => {
   const [revealedCapsules, setRevealedCapsules] = useState<RevealedCapsule[]>([]);
@@ -39,6 +41,8 @@ const Social: React.FC = () => {
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'popular'>('newest');
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
   const [expandedCapsules, setExpandedCapsules] = useState<Set<string>>(new Set());
+  const [activeThread, setActiveThread] = useState<{ capsuleId: string; seller: string } | null>(null);
+  const [activePayment, setActivePayment] = useState<{ capsuleId: string; seller: string; title?: string } | null>(null);
 
   const { address } = useAccount();
   const { toast } = useToast();
@@ -49,16 +53,27 @@ const Social: React.FC = () => {
     
     try {
       console.log('🕐 Checking for auto-unlocked capsules...');
-      const autoRevealedCount = await revealService.checkAndRevealUnlockedCapsules(address);
       
-      if (autoRevealedCount > 0) {
-        // Reload revealed capsules to show newly unlocked ones
-        const capsules = revealService.getRevealedCapsules();
-        setRevealedCapsules(capsules);
-        
+      // Use immediate reveal for faster results
+      const immediateRevealedCount = await revealService.immediateRevealAllUnlocked(address);
+      
+      // Also run the regular checks for good measure
+      const userAutoRevealedCount = await revealService.checkAndRevealUnlockedCapsules(address);
+      const socialAutoRevealedCount = await revealService.autoRevealUnlockedCapsulesForSocial(address);
+      
+      // Add fallback: show unlocked capsules even without full decryption
+      const pseudoRevealedCount = revealService.addUnlockedCapsulesAsPseudoRevealed(address);
+      
+      const totalAutoRevealed = immediateRevealedCount + userAutoRevealedCount + socialAutoRevealedCount + pseudoRevealedCount;
+      
+      // Always refresh the list to show any changes
+      const capsules = revealService.getRevealedCapsules();
+      setRevealedCapsules(capsules);
+      
+      if (totalAutoRevealed > 0) {
         toast({
           title: "🎉 Capsules Unlocked!",
-          description: `${autoRevealedCount} time capsule${autoRevealedCount > 1 ? 's have' : ' has'} reached ${autoRevealedCount > 1 ? 'their' : 'its'} unlock time and appeared in the social feed!`,
+          description: `${totalAutoRevealed} time capsule${totalAutoRevealed > 1 ? 's have' : ' has'} reached ${totalAutoRevealed > 1 ? 'their' : 'its'} unlock time and appeared in the social feed!`,
         });
       }
     } catch (error) {
@@ -68,9 +83,20 @@ const Social: React.FC = () => {
 
   // Load revealed capsules on component mount and check for auto-unlocked ones
   useEffect(() => {
-    const capsules = revealService.getRevealedCapsules();
-    setRevealedCapsules(capsules);
-  }, [address]);
+    const loadAndCheckCapsules = async () => {
+      // First load existing revealed capsules
+      const capsules = revealService.getRevealedCapsules();
+      setRevealedCapsules(capsules);
+      
+      // Then immediately check for unlocked capsules if user is connected
+      if (address) {
+        console.log('🚀 Initial check for unlocked capsules on social page load...');
+        await checkForUnlockedCapsules();
+      }
+    };
+    
+    loadAndCheckCapsules();
+  }, [address, checkForUnlockedCapsules]);
 
   // Auto-check for unlocked capsules whenever user address changes
   useEffect(() => {
@@ -79,14 +105,14 @@ const Social: React.FC = () => {
     }
   }, [address, checkForUnlockedCapsules]);
 
-  // Periodic check for unlocked capsules every 2 minutes
+  // Periodic check for unlocked capsules every 10 seconds
   useEffect(() => {
     if (!address) return;
     
     const interval = setInterval(() => {
       console.log('🔄 Periodic check for unlocked capsules...');
       checkForUnlockedCapsules();
-    }, 2 * 60 * 1000); // Check every 2 minutes
+    }, 10 * 1000); // Check every 10 seconds
     
     return () => clearInterval(interval);
   }, [address, checkForUnlockedCapsules]);
@@ -332,20 +358,23 @@ const Social: React.FC = () => {
                   </div>
                 )}
 
-                {/* Debug: Manual Auto-Unlock Check */}
+                {/* Refresh Unlocked Capsules Button */}
                 <div className="flex gap-2">
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => {
-                      console.log('🧪 Manual auto-unlock check triggered');
+                      console.log('🔄 Manual refresh triggered...');
                       checkForUnlockedCapsules();
                     }}
+                    className="hover:bg-blue-600"
                     disabled={!address}
                   >
                     <Clock className="w-4 h-4 mr-1" />
                     Check Unlocked
                   </Button>
+                  
+                  {/* Debug button removed in production */}
                 </div>
               </div>
             </CardContent>
@@ -409,6 +438,26 @@ const Social: React.FC = () => {
                         >
                           <Share2 className="w-4 h-4" />
                         </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setActiveThread({ capsuleId: capsule.id, seller: capsule.originalData.creator || '' })}
+                          >
+                            Message Seller
+                          </Button>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => setActivePayment({ 
+                              capsuleId: capsule.id, 
+                              seller: capsule.originalData.creator || '',
+                              title: capsule.originalData.title 
+                            })}
+                          >
+                            💰 Pay Seller
+                          </Button>
+                        </div>
                       </div>
 
                       <div>
@@ -555,6 +604,32 @@ const Social: React.FC = () => {
           </div>
         </motion.div>
       </div>
+
+      {/* Message Thread Modal */}
+      {activeThread && (
+        <MessageThread
+          capsuleId={activeThread.capsuleId}
+          sellerAddress={activeThread.seller}
+          open={true}
+          onClose={() => setActiveThread(null)}
+        />
+      )}
+
+      {/* Payment Modal */}
+      {activePayment && (
+        <PaymentModal
+          open={true}
+          onClose={() => setActivePayment(null)}
+          sellerAddress={activePayment.seller}
+          capsuleTitle={activePayment.title}
+          onSuccess={(txHash) => {
+            toast({
+              title: "Payment Sent!",
+              description: `Payment successfully sent to seller. Transaction: ${txHash.slice(0, 8)}...`,
+            });
+          }}
+        />
+      )}
     </div>
   );
 };

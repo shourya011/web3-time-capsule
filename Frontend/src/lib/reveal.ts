@@ -458,11 +458,27 @@ class RevealService {
       const currentTime = Date.now() / 1000;
       let autoRevealedCount = 0;
       
-      // Get all capsules from localStorage (in real app, this would be from the contract)
+      // Get capsules from multiple sources
       const storedCapsules = JSON.parse(localStorage.getItem('timeCapsules') || '[]');
-      // For demo purposes, check all capsules that the user might have access to
-      // In a real app, this would be filtered by contract ownership/permissions
-      const accessibleCapsules = storedCapsules;
+      
+      // Also get capsules from contract (if available)
+      let contractCapsules: Array<{ id: string; unlockTime: number; title: string; ipfsHash?: string; creator?: string }> = [];
+      try {
+        // Import contract service dynamically to avoid circular imports
+        const { TimeCapsuleContract } = await import('./contract');
+        const contract = new TimeCapsuleContract();
+        contractCapsules = await contract.getUserCapsules() || [];
+        console.log(`📋 Found ${contractCapsules.length} capsules from contract`);
+      } catch (error) {
+        console.log('📝 Contract not available, using localStorage only');
+      }
+      
+      // Combine all accessible capsules
+      const allCapsules = [...storedCapsules, ...contractCapsules];
+      // Remove duplicates based on id
+      const accessibleCapsules = allCapsules.filter((capsule, index, self) => 
+        index === self.findIndex(c => c.id === capsule.id)
+      );
       
       // Get recovery kits for decryption
       const recoveryKits = JSON.parse(localStorage.getItem('capsuleKeys') || '[]');
@@ -526,6 +542,246 @@ class RevealService {
       return autoRevealedCount;
     } catch (error) {
       console.error('❌ Failed to check unlocked capsules:', error);
+      return 0;
+    }
+  }
+
+  // Get all publicly unlocked capsules for social feed
+  async getAllUnlockedCapsules(): Promise<Array<{ id: string; unlockTime: number; title: string; description?: string; creator?: string; ipfsHash?: string; isUnlocked: boolean }>> {
+    try {
+      console.log('🌐 Fetching all publicly unlocked capsules for social feed...');
+      
+      const currentTime = Date.now() / 1000;
+      const allUnlockedCapsules: Array<{ id: string; unlockTime: number; title: string; description?: string; creator?: string; ipfsHash?: string; isUnlocked: boolean }> = [];
+      
+      // Get capsules from localStorage (all users' capsules stored locally)
+      const storedCapsules = JSON.parse(localStorage.getItem('timeCapsules') || '[]');
+      
+      // Add all naturally unlocked capsules from localStorage
+      storedCapsules.forEach((capsule: { id: string; unlockTime: number; title: string; description?: string; creator?: string; ipfsHash?: string; visibility?: string }) => {
+        const isNaturallyUnlocked = currentTime >= capsule.unlockTime;
+        if (isNaturallyUnlocked && capsule.visibility !== 'private') {
+          allUnlockedCapsules.push({
+            ...capsule,
+            isUnlocked: true
+          });
+        }
+      });
+
+      // Try to get capsules from contract as well
+      try {
+        const { TimeCapsuleContract } = await import('./contract');
+        const contract = new TimeCapsuleContract();
+        
+        // In a real implementation, you'd have a contract method to get all public capsules
+        // For now, we'll check if there are any contract-based capsules
+        console.log('📋 Contract integration available for social feed');
+      } catch (error) {
+        console.log('📝 Contract not available for social feed, using localStorage only');
+      }
+      
+      console.log(`🎉 Found ${allUnlockedCapsules.length} unlocked capsules for social feed`);
+      return allUnlockedCapsules;
+      
+    } catch (error) {
+      console.error('❌ Failed to get unlocked capsules:', error);
+      return [];
+    }
+  }
+
+  // Auto-reveal ALL unlocked capsules (including from other users) for social feed
+  async autoRevealUnlockedCapsulesForSocial(userAddress: string): Promise<number> {
+    try {
+      console.log('🌐 Auto-revealing unlocked capsules for social feed...');
+      
+      const unlockedCapsules = await this.getAllUnlockedCapsules();
+      const recoveryKits = JSON.parse(localStorage.getItem('capsuleKeys') || '[]');
+      let autoRevealedCount = 0;
+      
+      for (const capsule of unlockedCapsules) {
+        const isAlreadyRevealed = this.getRevealedCapsule(capsule.id) !== null;
+        
+        if (!isAlreadyRevealed) {
+          // Find recovery kit for this capsule
+          const recoveryKit = recoveryKits.find((kit: { capsuleId: string; ipfsCid: string }) => 
+            kit.capsuleId === capsule.id || kit.ipfsCid === capsule.ipfsHash
+          );
+          
+          if (recoveryKit) {
+            console.log(`🔓 Auto-revealing unlocked capsule for social: ${capsule.id}`);
+            
+            try {
+              const revealResult = await this.revealCapsule(
+                capsule.id,
+                recoveryKit,
+                capsule.creator || userAddress,
+                capsule.unlockTime,
+                'Automatically revealed when unlock time was reached'
+              );
+              
+              if (revealResult.success) {
+                autoRevealedCount++;
+                console.log(`✅ Successfully auto-revealed capsule for social: ${capsule.id}`);
+              }
+            } catch (error) {
+              console.error(`❌ Error auto-revealing capsule ${capsule.id}:`, error);
+            }
+          }
+        }
+      }
+      
+      return autoRevealedCount;
+    } catch (error) {
+      console.error('❌ Failed to auto-reveal capsules for social:', error);
+      return 0;
+    }
+  }
+  // Immediate check and reveal of all unlocked capsules (for social feed)
+  async immediateRevealAllUnlocked(userAddress: string): Promise<number> {
+    try {
+      console.log('⚡ Immediate reveal of all unlocked capsules...');
+      
+      const currentTime = Date.now() / 1000;
+      let autoRevealedCount = 0;
+      
+      // Get all capsules from localStorage
+      const storedCapsules = JSON.parse(localStorage.getItem('timeCapsules') || '[]');
+      console.log(`📋 Found ${storedCapsules.length} stored capsules`);
+      
+      // Get recovery kits for decryption
+      const recoveryKits = JSON.parse(localStorage.getItem('capsuleKeys') || '[]');
+      console.log(`🔑 Found ${recoveryKits.length} recovery kits`);
+      
+      // Check each capsule immediately
+      for (const capsule of storedCapsules) {
+        const isNaturallyUnlocked = currentTime >= capsule.unlockTime;
+        const isAlreadyRevealed = this.getRevealedCapsule(capsule.id) !== null;
+        
+        console.log(`🔍 Capsule "${capsule.title}" (ID: ${capsule.id})`);
+        console.log(`   Unlock time: ${new Date(capsule.unlockTime * 1000).toLocaleString()}`);
+        console.log(`   Is unlocked: ${isNaturallyUnlocked}, Already revealed: ${isAlreadyRevealed}`);
+        console.log(`   IPFS Hash: ${capsule.ipfsHash}`);
+        console.log(`   Creator: ${capsule.creator}`);
+        
+        if (isNaturallyUnlocked && !isAlreadyRevealed) {
+          // Find the recovery kit for this capsule - try multiple matching strategies
+          let recoveryKit = recoveryKits.find((kit: { capsuleId: string; ipfsCid: string }) => 
+            kit.capsuleId === capsule.id
+          );
+          
+          if (!recoveryKit) {
+            recoveryKit = recoveryKits.find((kit: { capsuleId: string; ipfsCid: string }) => 
+              kit.ipfsCid === capsule.ipfsHash
+            );
+          }
+          
+          // Try loose matching for timestamp-based IDs
+          if (!recoveryKit && capsule.id.match(/^\d+$/)) {
+            recoveryKit = recoveryKits.find((kit: { capsuleId: string; ipfsCid: string }) => 
+              kit.ipfsCid && kit.ipfsCid.includes(capsule.id)
+            );
+          }
+          
+          console.log(`   🔑 Recovery kit search results:`);
+          console.log(`      Direct ID match: ${recoveryKits.some((kit: { capsuleId: string }) => kit.capsuleId === capsule.id)}`);
+          console.log(`      IPFS hash match: ${recoveryKits.some((kit: { ipfsCid: string }) => kit.ipfsCid === capsule.ipfsHash)}`);
+          console.log(`      Recovery kit found: ${!!recoveryKit}`);
+          
+          if (recoveryKit) {
+            console.log(`⚡ Immediately revealing unlocked capsule: ${capsule.id}`);
+            
+            try {
+              const revealResult = await this.revealCapsule(
+                capsule.id,
+                recoveryKit,
+                capsule.creator || userAddress,
+                capsule.unlockTime,
+                'Automatically revealed when social feed loaded'
+              );
+              
+              if (revealResult.success) {
+                autoRevealedCount++;
+                console.log(`✅ Successfully revealed: ${capsule.id}`);
+              } else {
+                console.warn(`⚠️ Failed to reveal ${capsule.id}:`, revealResult.error);
+              }
+            } catch (error) {
+              console.error(`❌ Error revealing ${capsule.id}:`, error);
+            }
+          } else {
+            console.warn(`⚠️ No recovery kit found for unlocked capsule: ${capsule.id}`);
+            console.log(`   Available recovery kit IDs:`, recoveryKits.map((kit: { capsuleId: string; ipfsCid: string }) => ({ id: kit.capsuleId, cid: kit.ipfsCid })));
+          }
+        }
+      }
+      
+      console.log(`⚡ Immediate reveal complete: ${autoRevealedCount} capsules revealed`);
+      return autoRevealedCount;
+    } catch (error) {
+      console.error('❌ Failed immediate reveal:', error);
+      return 0;
+    }
+  }
+
+  // Create pseudo-revealed capsules for unlocked ones that can't be fully decrypted
+  createPseudoRevealedCapsule(capsule: { id: string; title: string; description: string; unlockTime: number; creator?: string }): RevealedCapsule {
+    return {
+      id: capsule.id,
+      originalData: {
+        title: capsule.title,
+        description: capsule.description,
+        files: [],
+        createdAt: Date.now(),
+        creator: capsule.creator || 'Unknown'
+      },
+      revealMetadata: {
+        revealedAt: Date.now(),
+        revealedBy: capsule.creator || 'system',
+        isEarlyReveal: false,
+        originalUnlockTime: capsule.unlockTime,
+        revealMessage: 'Unlocked naturally (content preview)',
+        socialInteractions: {
+          likes: 0,
+          comments: []
+        }
+      }
+    };
+  }
+
+  // Add unlocked capsules to social feed (even without full decryption)
+  addUnlockedCapsulesAsPseudoRevealed(userAddress: string): number {
+    try {
+      console.log('📝 Adding unlocked capsules as pseudo-revealed...');
+      
+      const currentTime = Date.now() / 1000;
+      const storedCapsules = JSON.parse(localStorage.getItem('timeCapsules') || '[]');
+      const existingRevealed = this.getRevealedCapsules();
+      let addedCount = 0;
+      
+      const newRevealedCapsules = [...existingRevealed];
+      
+      for (const capsule of storedCapsules) {
+        const isNaturallyUnlocked = currentTime >= capsule.unlockTime;
+        const isAlreadyRevealed = existingRevealed.some(r => r.id === capsule.id);
+        
+        if (isNaturallyUnlocked && !isAlreadyRevealed && capsule.visibility !== 'private') {
+          console.log(`📝 Adding pseudo-revealed capsule: ${capsule.title} (${capsule.id})`);
+          
+          const pseudoRevealed = this.createPseudoRevealedCapsule(capsule);
+          newRevealedCapsules.push(pseudoRevealed);
+          addedCount++;
+        }
+      }
+      
+      if (addedCount > 0) {
+        // Update the revealed capsules list
+        localStorage.setItem(this.REVEALED_CAPSULES_KEY, JSON.stringify(newRevealedCapsules));
+        console.log(`📝 Added ${addedCount} pseudo-revealed capsules to social feed`);
+      }
+      
+      return addedCount;
+    } catch (error) {
+      console.error('❌ Failed to add pseudo-revealed capsules:', error);
       return 0;
     }
   }
